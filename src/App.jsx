@@ -28,8 +28,8 @@ const LOGO_LOCKUP = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAVQAAACgCAYAA
    · Project URL  (barra de direcciones del panel: https://xxxx.supabase.co)
    · anon public key  (Settings → API Keys)
    ============================================================= */
-const SUPABASE_URL = "https://irhmmilukjhwdrakwmuj.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlyaG1taWx1a2pod2RyYWt3bXVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMjYyODcsImV4cCI6MjEwMjkwMjI4N30.dYz1PSnI-_423dHizXd_JKPjDvj2nwbjMb1B7EtIEXw";
+const SUPABASE_URL = "PEGA_AQUI_TU_PROJECT_URL";
+const SUPABASE_ANON_KEY = "PEGA_AQUI_TU_ANON_KEY";
 
 const supabase = SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.startsWith("eyJ")
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -69,6 +69,15 @@ const aLecturaDB = (l, userId) => ({
 });
 const deLecturaDB = (r) => ({
   id: r.id, equipoId: r.equipo_id, fecha: r.fecha, valor: +r.valor, fuera: !!r.fuera, tecnico: r.tecnico || "",
+});
+const aJornadaDB = (j, userId) => ({
+  id: j.id, user_id: userId, gerencia: j.gerencia, fecha_inicio: j.fechaInicio, fecha_fin: j.fechaFin || j.fechaInicio,
+  equipos_atendidos: +j.equiposAtendidos || 0, tecnico: j.tecnico || "", nota: j.nota || "", desglose: j.desglose || [],
+});
+const deJornadaDB = (r) => ({
+  id: r.id, gerencia: r.gerencia, fechaInicio: r.fecha_inicio, fechaFin: r.fecha_fin,
+  equiposAtendidos: +r.equipos_atendidos || 0, tecnico: r.tecnico || "", nota: r.nota || "",
+  desglose: Array.isArray(r.desglose) ? r.desglose : [],
 }); /* CVG | Ferrominera Orinoco, lockup oficial en blanco */
 
 const TIPOS_EQUIPO = ["Split", "A/A ventana", "Central / compacto", "Aire de precisión", "Cava / cuarto frío", "Chiller", "Nevera / congelador", "Bebedero", "Otro"];
@@ -245,6 +254,7 @@ export default function TPMFMO() {
   const [equipos, setEquipos] = useState([]);
   const [atenciones, setAtenciones] = useState([]);
   const [lecturas, setLecturas] = useState([]);
+  const [jornadas, setJornadas] = useState([]);
   const [tab, setTab] = useState("tablero");
   const [aviso, setAviso] = useState(null);
   const [cargado, setCargado] = useState(false);
@@ -320,19 +330,21 @@ export default function TPMFMO() {
     setCargado(false);
     (async () => {
       try {
-        const [eq, at, le] = await Promise.all([
+        const [eq, at, le, jo] = await Promise.all([
           supabase.from("equipos").select("*").order("gerencia").order("nombre"),
           supabase.from("atenciones").select("*").order("creado", { ascending: false }),
           supabase.from("lecturas").select("*").order("creado", { ascending: false }),
+          supabase.from("jornadas").select("*").order("fecha_inicio", { ascending: false }),
         ]);
-        if (eq.error || at.error || le.error) throw (eq.error || at.error || le.error);
+        if (eq.error || at.error || le.error || jo.error) throw (eq.error || at.error || le.error || jo.error);
         setEquipos(eq.data.map(deEquipoDB));
         setAtenciones(at.data.map(deAtencionDB));
         setLecturas(le.data.map(deLecturaDB));
+        setJornadas(jo.data.map(deJornadaDB));
       } catch (e) {
         try {
           const c = JSON.parse(localStorage.getItem(claveCache));
-          if (c) { setEquipos(c.equipos || []); setAtenciones(c.atenciones || []); setLecturas(c.lecturas || []); }
+          if (c) { setEquipos(c.equipos || []); setAtenciones(c.atenciones || []); setLecturas(c.lecturas || []); setJornadas(c.jornadas || []); }
         } catch (e2) { /* sin caché */ }
       }
       setPendientes(leerOutbox().length);
@@ -344,8 +356,8 @@ export default function TPMFMO() {
   /* ---- caché local ---- */
   useEffect(() => {
     if (!cargado || !claveCache) return;
-    try { localStorage.setItem(claveCache, JSON.stringify({ equipos, atenciones, lecturas })); } catch (e) { /* lleno */ }
-  }, [equipos, atenciones, lecturas, cargado, claveCache]);
+    try { localStorage.setItem(claveCache, JSON.stringify({ equipos, atenciones, lecturas, jornadas })); } catch (e) { /* lleno */ }
+  }, [equipos, atenciones, lecturas, jornadas, cargado, claveCache]);
 
   const notificar = (m) => { setAviso(m); setTimeout(() => setAviso(null), 2600); };
 
@@ -423,16 +435,33 @@ export default function TPMFMO() {
       if (!enLinea) { notificar("Se necesita internet para vaciar la nube"); return; }
       try {
         await supabase.from("equipos").delete().not("id", "is", null); /* cascada borra atenciones y lecturas */
+        await supabase.from("jornadas").delete().not("id", "is", null);
         escribirOutbox([]);
-        setEquipos([]); setAtenciones([]); setLecturas([]); setTab("tablero");
+        setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setTab("tablero");
         notificar("Sistema reiniciado · datos borrados");
       } catch (e) { notificar("Error al vaciar: intenta de nuevo"); }
     });
   };
 
+  const registrarJornada = (j) => {
+    const nueva = { id: uid(), ...j };
+    setJornadas((js) => [nueva, ...js]);
+    /* actualizar ultimo preventivo de todos los equipos del area (reinicia su semaforo) */
+    const equiposArea = equipos.filter((e) => gerenciaDe(e) === j.gerencia);
+    const ops = [{ tabla: "jornadas", op: "upsert", datos: aJornadaDB(nueva, usuario.id) }];
+    const fecha = j.fechaFin || j.fechaInicio;
+    equiposArea.forEach((e) => {
+      const act = { ...e, ultimoPrev: fecha };
+      ops.push({ tabla: "equipos", op: "upsert", datos: aEquipoDB(act, usuario.id) });
+    });
+    if (equiposArea.length) setEquipos((xs) => xs.map((e) => (gerenciaDe(e) === j.gerencia ? { ...e, ultimoPrev: fecha } : e)));
+    persistir(ops);
+    notificar(`Jornada registrada · ${j.gerencia} · semáforo del área reiniciado`);
+  };
+
   const cerrarSesion = async () => {
     try { await supabase.auth.signOut(); } catch (e) { /* sin conexión */ }
-    setEquipos([]); setAtenciones([]); setLecturas([]); setTab("tablero");
+    setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setTab("tablero");
   };
 
   const alertasPrev = useMemo(
@@ -449,7 +478,7 @@ export default function TPMFMO() {
   );
   const nAlertas = alertasPrev.length + alertasTemp.length;
 
-  const tabs = [["tablero", "Tablero"], ["equipos", "Equipos"], ["atencion", "Registrar"], ["analisis", "Análisis"], ["guia", "Guía"]];
+  const tabs = [["tablero", "Tablero"], ["equipos", "Equipos"], ["atencion", "Registrar"], ["jornadas", "Jornadas"], ["analisis", "Análisis"], ["guia", "Guía"]];
 
   if (!supabase) return <PantallaMensaje titulo="Falta configurar" texto="Abre src/App.jsx y pega el Project URL y la anon key del proyecto de Supabase en las dos líneas marcadas al inicio del archivo." />;
   if (!autListo) return <PantallaMensaje titulo="TPM FMO" texto="Iniciando…" />;
@@ -529,7 +558,8 @@ export default function TPMFMO() {
         {tab === "tablero" && <Tablero equipos={equipos} atenciones={atenciones} lecturas={lecturas} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
         {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} />}
         {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} />}
-        {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} />}
+        {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} />}
+        {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />}
         {tab === "guia" && <Guia onVaciar={vaciarTodo} onReal={cargarReal} />}
       </main>
     </div>
@@ -1079,8 +1109,320 @@ function Registrar({ equipos, onAtencion, onLectura }) {
   );
 }
 
+/* ============================================================ JORNADAS DE MANTENIMIENTO POR ÁREA */
+function Jornadas({ equipos, jornadas, onRegistrar }) {
+  const gerencias = [...new Set(equipos.map(gerenciaDe))].sort();
+  const [f, setF] = useState({ gerencia: "", fechaInicio: hoy(), fechaFin: hoy(), equiposAtendidos: "", tecnico: "", nota: "" });
+  const [fotos, setFotos] = useState([]); // solo en memoria (para el informe del momento)
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const equiposDelArea = f.gerencia ? equipos.filter((e) => gerenciaDe(e) === f.gerencia) : [];
+  const totalArea = equiposDelArea.length;
+
+  /* al elegir area, sugerir el total de equipos */
+  const elegirArea = (e) => {
+    const g = e.target.value;
+    const n = equipos.filter((x) => gerenciaDe(x) === g).length;
+    setF({ ...f, gerencia: g, equiposAtendidos: n ? String(n) : "" });
+  };
+
+  const agregarFotos = (e) => {
+    const files = Array.from(e.target.files || []);
+    files.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => setFotos((fs) => [...fs, { nombre: file.name, url: ev.target.result }]);
+      reader.readAsDataURL(file);
+    });
+    e.target.value = "";
+  };
+  const quitarFoto = (i) => setFotos((fs) => fs.filter((_, k) => k !== i));
+
+  const listo = f.gerencia && f.fechaInicio && +f.equiposAtendidos > 0;
+  const guardar = () => {
+    if (!listo) return;
+    /* desglose por tipo de equipo del área, para el registro tipo informe */
+    const desglose = {};
+    equiposDelArea.forEach((e) => { desglose[e.tipo] = (desglose[e.tipo] || 0) + 1; });
+    onRegistrar({
+      gerencia: f.gerencia, fechaInicio: f.fechaInicio, fechaFin: f.fechaFin || f.fechaInicio,
+      equiposAtendidos: +f.equiposAtendidos, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
+      desglose: Object.entries(desglose).map(([tipo, n]) => ({ tipo, n })),
+    });
+    setF({ ...f, equiposAtendidos: "", nota: "" });
+    setFotos([]);
+  };
+
+  const nombreArea = (id) => equipos.find((e) => e.id === id)?.nombre || "";
+
+  if (!equipos.length)
+    return <p style={{ color: T.inkSoft }}>Primero carga el inventario de equipos (Guía → Cargar Programa 2026, o pestaña Equipos).</p>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
+        <h2 style={h2Style}>
+          Registrar jornada de mantenimiento
+          <Ayuda texto="Registra el mantenimiento preventivo de toda un área en una sola jornada, como en los informes: seleccionas el área, el rango de fechas, cuántos equipos se atendieron y el técnico responsable. Al guardar, se reinicia el semáforo de preventivo de todos los equipos de esa área. Las fotos son solo para armar el informe del momento y no se guardan, para no ocupar espacio." />
+        </h2>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+          <Field label="Área / Gerencia" ancho={220}>
+            <select style={inputStyle} value={f.gerencia} onChange={elegirArea}>
+              <option value="">Selecciona el área…</option>
+              {gerencias.map((g) => {
+                const n = equipos.filter((x) => gerenciaDe(x) === g).length;
+                return <option key={g} value={g}>{g} ({n} equipos)</option>;
+              })}
+            </select>
+          </Field>
+          <Field label="Fecha inicio">
+            <input style={inputStyle} type="date" value={f.fechaInicio} onChange={set("fechaInicio")} />
+          </Field>
+          <Field label="Fecha fin">
+            <input style={inputStyle} type="date" value={f.fechaFin} onChange={set("fechaFin")} />
+          </Field>
+          <Field label="Equipos atendidos" ayuda="Número de equipos a los que se les hizo mantenimiento en esta jornada. Se sugiere el total del área, ajústalo si se atendieron menos.">
+            <input style={inputStyle} type="number" min="1" max={totalArea || undefined} value={f.equiposAtendidos} onChange={set("equiposAtendidos")} placeholder={totalArea ? String(totalArea) : "0"} />
+          </Field>
+          <Field label="Técnico / cuadrilla">
+            <input style={inputStyle} value={f.tecnico} onChange={set("tecnico")} placeholder="Empresa TITAN / J. Pérez" />
+          </Field>
+          <Field label="Observaciones (opcional)" ancho={240}>
+            <input style={inputStyle} value={f.nota} onChange={set("nota")} placeholder="Sin novedades" />
+          </Field>
+        </div>
+
+        {f.gerencia && totalArea > 0 && (
+          <div style={{ marginTop: 12, padding: "10px 14px", background: "#FAFBFC", border: `1.5px solid ${T.line}`, borderRadius: 8 }}>
+            <strong style={{ fontFamily: display, fontSize: 15, textTransform: "uppercase", color: T.inkSoft }}>Equipos del área ({totalArea})</strong>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+              {Object.entries(equiposDelArea.reduce((a, e) => { a[e.tipo] = (a[e.tipo] || 0) + 1; return a; }, {})).map(([t, n]) => (
+                <span key={t} style={{ fontFamily: mono, fontSize: 12, padding: "3px 10px", borderRadius: 6, background: T.bg, border: `1px solid ${T.line}` }}>{t}: {n}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* fotos de evidencia (memoria) */}
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <strong style={{ fontFamily: display, fontSize: 15, textTransform: "uppercase", color: T.inkSoft }}>Evidencias fotográficas</strong>
+            <Ayuda texto="Adjunta fotos del trabajo realizado para tenerlas a la vista al armar el informe. No se almacenan en la nube: son temporales de esta sesión, para mantener la app liviana y rápida." />
+          </div>
+          <label style={{ ...btnGhost(T.steel), display: "inline-block", marginTop: 8, cursor: "pointer" }}>
+            + Añadir fotos
+            <input type="file" accept="image/*" multiple onChange={agregarFotos} style={{ display: "none" }} />
+          </label>
+          {fotos.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 8, marginTop: 10 }}>
+              {fotos.map((foto, i) => (
+                <div key={i} style={{ position: "relative", borderRadius: 6, overflow: "hidden", border: `1.5px solid ${T.line}` }}>
+                  <img src={foto.url} alt={foto.nombre} style={{ width: "100%", height: 90, objectFit: "cover", display: "block" }} />
+                  <button onClick={() => quitarFoto(i)} style={{ position: "absolute", top: 3, right: 3, background: "rgba(193,39,45,0.9)", color: "#fff", border: "none", borderRadius: 4, width: 22, height: 22, cursor: "pointer", fontFamily: mono, fontSize: 13, lineHeight: 1 }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {fotos.length > 0 && <p style={{ fontSize: 12, color: T.inkSoft, margin: "6px 0 0" }}>{fotos.length} foto{fotos.length === 1 ? "" : "s"} cargada{fotos.length === 1 ? "" : "s"} (temporal, no se guarda).</p>}
+        </div>
+
+        <button style={{ ...btn(T.orange), marginTop: 16, opacity: listo ? 1 : 0.5 }} disabled={!listo} onClick={guardar}>
+          Guardar jornada
+        </button>
+      </section>
+
+      {/* listado de jornadas tipo informe */}
+      <section>
+        <h2 style={h2Style}>Jornadas registradas</h2>
+        {!jornadas.length ? (
+          <p style={{ color: T.inkSoft }}>Aún no hay jornadas registradas. Documenta la primera arriba.</p>
+        ) : (
+          jornadas.map((j) => (
+            <div key={j.id} style={{ display: "flex", background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, marginBottom: 10, overflow: "hidden" }}>
+              <Franja color={T.ok} />
+              <div style={{ padding: "12px 16px", flex: 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+                  <strong style={{ fontFamily: display, fontSize: 19, textTransform: "uppercase" }}>{j.gerencia}</strong>
+                  <span style={{ fontFamily: mono, fontSize: 13, color: T.ok, fontWeight: 600 }}>{j.equiposAtendidos} equipo{j.equiposAtendidos === 1 ? "" : "s"}</span>
+                </div>
+                <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, marginTop: 2 }}>
+                  Del {j.fechaInicio} al {j.fechaFin}{j.tecnico ? ` · ${j.tecnico}` : ""}
+                </div>
+                {j.desglose && j.desglose.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                    {j.desglose.map((d) => (
+                      <span key={d.tipo} style={{ fontFamily: mono, fontSize: 11.5, padding: "2px 9px", borderRadius: 6, background: T.bg, border: `1px solid ${T.line}` }}>{d.tipo}: {d.n}</span>
+                    ))}
+                  </div>
+                )}
+                {j.nota && <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 6 }}>{j.nota}</div>}
+              </div>
+            </div>
+          ))
+        )}
+      </section>
+    </div>
+  );
+}
+
+/* ============================================================ ESTADO DEL MANTENIMIENTO (análisis sin fallas) */
+function EstadoMantenimiento({ equipos, atenciones, lecturas, jornadas }) {
+  /* ---- cumplimiento del plan preventivo (foto de hoy) ---- */
+  const conteo = { alDia: 0, planificar: 0, urgentes: 0, vencidos: 0 };
+  equipos.forEach((e) => {
+    const uso = estadoEquipo(e).uso;
+    if (uso >= 1) conteo.vencidos += 1;
+    else if (uso >= 0.9) conteo.urgentes += 1;
+    else if (uso >= 0.75) conteo.planificar += 1;
+    else conteo.alDia += 1;
+  });
+  const total = equipos.length;
+  const cumplimiento = total ? (total - conteo.vencidos) / total : 0;
+  const colorCumpl = cumplimiento >= 0.95 ? T.ok : cumplimiento >= 0.85 ? "#9A7503" : T.danger;
+  const segmentos = [
+    ["Al día", conteo.alDia, T.ok],
+    ["Por planificar", conteo.planificar, T.warn],
+    ["Urgentes", conteo.urgentes, T.danger],
+    ["Vencidos", conteo.vencidos, "#6E0F14"],
+  ];
+
+  /* ---- trabajo preventivo realizado (acumulado) ---- */
+  const nPrevInd = atenciones.filter((a) => a.tipo === "preventiva").length;
+  const nJornadas = (jornadas || []).length;
+  const equiposCubiertos = (jornadas || []).reduce((s, j) => s + (+j.equiposAtendidos || 0), 0);
+  const nLecturas = lecturas.length;
+  const nLectFuera = lecturas.filter((l) => l.fuera).length;
+
+  /* ---- composición del parque ---- */
+  const porTipo = {};
+  const porCrit = { A: 0, B: 0, C: 0 };
+  const areas = new Set();
+  equipos.forEach((e) => {
+    porTipo[e.tipo] = (porTipo[e.tipo] || 0) + 1;
+    porCrit[e.criticidad] = (porCrit[e.criticidad] || 0) + 1;
+    areas.add(gerenciaDe(e));
+  });
+
+  /* ---- áreas con menor cumplimiento ---- */
+  const porArea = {};
+  equipos.forEach((e) => {
+    const g = gerenciaDe(e);
+    if (!porArea[g]) porArea[g] = { total: 0, enPlazo: 0 };
+    porArea[g].total += 1;
+    if (estadoEquipo(e).uso < 1) porArea[g].enPlazo += 1;
+  });
+  const ranking = Object.entries(porArea)
+    .map(([g, v]) => ({ g, ...v, pct: v.total ? v.enPlazo / v.total : 0 }))
+    .sort((a, b) => a.pct - b.pct || b.total - a.total);
+  const peores = ranking.filter((r) => r.pct < 1).slice(0, 8);
+
+  /* ---- antigüedad (solo si hay años registrados) ---- */
+  const conAnio = equipos.map((e) => +e.anio).filter((a) => a > 1950);
+  const anioActual = new Date().getFullYear();
+  const edades = conAnio.map((a) => anioActual - a);
+  const viejos = edades.filter((d) => d >= 15).length;
+  const edadProm = edades.length ? edades.reduce((s, d) => s + d, 0) / edades.length : null;
+
+  const ChipDato = ({ texto, color }) => (
+    <span style={{ fontFamily: mono, fontSize: 12.5, padding: "4px 12px", borderRadius: 6, background: T.bg, border: `1.5px solid ${T.line}`, color: color || T.ink }}>{texto}</span>
+  );
+
+  return (
+    <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
+      <h2 style={h2Style}>
+        Estado del mantenimiento
+        <Ayuda texto="La foto general del parque HOY, independiente de las fallas: cuántos equipos están al día con su preventivo, cuánto trabajo preventivo se ha ejecutado, cómo se compone el inventario y qué áreas necesitan atención. Si aquí todo está verde y abajo no hay fallas, el área está haciendo su trabajo — y este panel lo demuestra." />
+      </h2>
+
+      {/* cumplimiento del plan */}
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap", marginTop: 4 }}>
+        <div>
+          <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em", color: T.inkSoft }}>Cumplimiento del plan preventivo</div>
+          <div style={{ fontFamily: mono, fontSize: 34, fontWeight: 700, color: colorCumpl, lineHeight: 1.1 }}>{(cumplimiento * 100).toFixed(1)} %</div>
+          <div style={{ fontSize: 11.5, color: T.inkSoft }}>equipos dentro de su plazo de preventivo</div>
+        </div>
+        <div style={{ flex: 1, minWidth: 240 }}>
+          <div style={{ display: "flex", height: 20, borderRadius: 6, overflow: "hidden", border: `1px solid ${T.line}` }}>
+            {segmentos.map(([lbl, n, color]) => n > 0 && (
+              <div key={lbl} title={`${lbl}: ${n}`} style={{ width: `${(n / total) * 100}%`, background: color }} />
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+            {segmentos.map(([lbl, n, color]) => (
+              <span key={lbl} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontFamily: mono, fontSize: 12, color: T.inkSoft }}>
+                <span style={{ width: 10, height: 10, borderRadius: 3, background: color, display: "inline-block" }} />
+                {lbl}: <strong style={{ color: T.ink }}>{n}</strong>
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* trabajo preventivo realizado */}
+      <div style={{ marginTop: 16, borderTop: `1px solid ${T.line}`, paddingTop: 12 }}>
+        <strong style={{ fontFamily: display, fontSize: 15, textTransform: "uppercase", color: T.inkSoft }}>Trabajo preventivo realizado</strong>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          <ChipDato texto={`${nJornadas} jornada${nJornadas === 1 ? "" : "s"} de área`} color={nJornadas ? T.ok : T.inkSoft} />
+          <ChipDato texto={`${equiposCubiertos} equipos cubiertos en jornadas`} color={equiposCubiertos ? T.ok : T.inkSoft} />
+          <ChipDato texto={`${nPrevInd} preventivo${nPrevInd === 1 ? "" : "s"} individual${nPrevInd === 1 ? "" : "es"}`} />
+          <ChipDato texto={`${nLecturas} lectura${nLecturas === 1 ? "" : "s"} de temperatura`} />
+          {nLecturas > 0 && <ChipDato texto={`${nLectFuera} fuera de rango`} color={nLectFuera ? T.danger : T.ok} />}
+        </div>
+      </div>
+
+      {/* composicion del parque */}
+      <div style={{ marginTop: 14, borderTop: `1px solid ${T.line}`, paddingTop: 12 }}>
+        <strong style={{ fontFamily: display, fontSize: 15, textTransform: "uppercase", color: T.inkSoft }}>Composición del parque</strong>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+          <ChipDato texto={`${total} equipos`} />
+          <ChipDato texto={`${areas.size} áreas`} />
+          <ChipDato texto={`Crit. A: ${porCrit.A}`} color={T.danger} />
+          <ChipDato texto={`Crit. B: ${porCrit.B}`} />
+          <ChipDato texto={`Crit. C: ${porCrit.C}`} />
+          {Object.entries(porTipo).sort((a, b) => b[1] - a[1]).map(([t, n]) => (
+            <ChipDato key={t} texto={`${t}: ${n}`} />
+          ))}
+        </div>
+        {edades.length > 0 && (
+          <p style={{ fontSize: 12.5, color: T.inkSoft, margin: "8px 0 0" }}>
+            Antigüedad (de {edades.length} con año registrado): promedio {fmt(edadProm)} años · <strong style={{ color: viejos ? "#9A7503" : T.ink }}>{viejos}</strong> con 15+ años de servicio (candidatos a evaluación de reemplazo).
+          </p>
+        )}
+      </div>
+
+      {/* areas con menor cumplimiento */}
+      {peores.length > 0 && (
+        <div style={{ marginTop: 14, borderTop: `1px solid ${T.line}`, paddingTop: 12 }}>
+          <strong style={{ fontFamily: display, fontSize: 15, textTransform: "uppercase", color: T.inkSoft }}>
+            Áreas con preventivos vencidos
+            <Ayuda texto="Áreas ordenadas de menor a mayor cumplimiento (equipos dentro de plazo sobre el total del área). Son las próximas jornadas a programar." />
+          </strong>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+            {peores.map((r) => {
+              const c = r.pct >= 0.95 ? T.ok : r.pct >= 0.85 ? T.warn : T.danger;
+              return (
+                <div key={r.g}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, marginBottom: 2, gap: 8, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: 600 }}>{r.g}</span>
+                    <span style={{ fontFamily: mono, color: T.inkSoft }}>{r.enPlazo}/{r.total} en plazo · {(r.pct * 100).toFixed(0)} %</span>
+                  </div>
+                  <div style={{ height: 12, background: T.bg, borderRadius: 4, border: `1px solid ${T.line}` }}>
+                    <div style={{ height: "100%", width: `${r.pct * 100}%`, background: c, borderRadius: 4, minWidth: 2 }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {peores.length === 0 && total > 0 && (
+        <p style={{ fontSize: 13, color: T.ok, margin: "12px 0 0", fontWeight: 600 }}>✓ Todas las áreas tienen sus equipos dentro del plazo de preventivo.</p>
+      )}
+    </section>
+  );
+}
+
 /* ============================================================ ANÁLISIS */
-function Analisis({ equipos, atenciones, lecturas }) {
+function Analisis({ equipos, atenciones, lecturas, jornadas }) {
   const nombre = (id) => equipos.find((e) => e.id === id)?.nombre || "—";
   const equipoDe = (id) => equipos.find((e) => e.id === id);
 
@@ -1155,11 +1497,11 @@ function Analisis({ equipos, atenciones, lecturas }) {
   }, [consumoGas, equipos]);
   const sospechososFuga = consumoGas.filter((c) => c.recargas >= 2);
 
-  if (!atenciones.length)
+  if (!equipos.length)
     return (
       <div style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 24 }}>
-        <p style={{ fontFamily: display, fontSize: 22, fontWeight: 600, margin: "0 0 8px", textTransform: "uppercase" }}>Aún no hay atenciones registradas</p>
-        <p style={{ color: T.inkSoft, margin: 0 }}>Cuando registres fallas y preventivos, aquí verás el resumen del área, el diagrama de Pareto de causas, el análisis de consumo de refrigerante y el historial completo.</p>
+        <p style={{ fontFamily: display, fontSize: 22, fontWeight: 600, margin: "0 0 8px", textTransform: "uppercase" }}>Sin inventario cargado</p>
+        <p style={{ color: T.inkSoft, margin: 0 }}>Carga los equipos (Guía → Cargar Programa 2026 o pestaña Equipos) para ver el estado del mantenimiento. Las fallas, preventivos y lecturas que registres alimentarán el análisis completo.</p>
       </div>
     );
 
@@ -1185,6 +1527,8 @@ function Analisis({ equipos, atenciones, lecturas }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <EstadoMantenimiento equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />
+
       {/* ------- resumen ejecutivo ------- */}
       <section>
         <h2 style={h2Style}>
