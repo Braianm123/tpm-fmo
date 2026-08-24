@@ -28,8 +28,8 @@ const LOGO_LOCKUP = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAVQAAACgCAYAA
    · Project URL  (barra de direcciones del panel: https://xxxx.supabase.co)
    · anon public key  (Settings → API Keys)
    ============================================================= */
-const SUPABASE_URL = "PEGA_AQUI_TU_PROJECT_URL";
-const SUPABASE_ANON_KEY = "PEGA_AQUI_TU_ANON_KEY";
+const SUPABASE_URL = "https://irhmmilukjhwdrakwmuj.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlyaG1taWx1a2pod2RyYWt3bXVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMjYyODcsImV4cCI6MjEwMjkwMjI4N30.dYz1PSnI-_423dHizXd_JKPjDvj2nwbjMb1B7EtIEXw";
 
 const supabase = SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.startsWith("eyJ")
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
