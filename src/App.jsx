@@ -78,6 +78,17 @@ const deJornadaDB = (r) => ({
   id: r.id, gerencia: r.gerencia, fechaInicio: r.fecha_inicio, fechaFin: r.fecha_fin,
   equiposAtendidos: +r.equipos_atendidos || 0, tecnico: r.tecnico || "", nota: r.nota || "",
   desglose: Array.isArray(r.desglose) ? r.desglose : [],
+});
+/* aires montados (instalaciones nuevas, inventario VISCO) */
+const aAireDB = (a, userId) => ({
+  id: a.id, user_id: userId, n: a.n == null || a.n === "" ? null : +a.n, lugar: a.lugar, marca: a.marca || "",
+  tipo: a.tipo || "Split", capacidad: a.capacidad || "", fecha_montaje: a.fechaMontaje || null,
+  serial: a.serial || "", codigo_visco: a.codigoVisco || "", nota: a.nota || "",
+});
+const deAireDB = (r) => ({
+  id: r.id, n: r.n == null ? null : +r.n, lugar: r.lugar, marca: r.marca || "", tipo: r.tipo || "Split",
+  capacidad: r.capacidad || "", fechaMontaje: r.fecha_montaje || "", serial: r.serial || "",
+  codigoVisco: r.codigo_visco || "", nota: r.nota || "",
 }); /* CVG | Ferrominera Orinoco, lockup oficial en blanco */
 
 const TIPOS_EQUIPO = ["Split", "A/A ventana", "Central / compacto", "Aire de precisión", "Cava / cuarto frío", "Chiller", "Nevera / congelador", "Bebedero", "Otro"];
@@ -255,6 +266,7 @@ export default function TPMFMO() {
   const [atenciones, setAtenciones] = useState([]);
   const [lecturas, setLecturas] = useState([]);
   const [jornadas, setJornadas] = useState([]);
+  const [aires, setAires] = useState([]);
   const [tab, setTab] = useState("tablero");
   const [aviso, setAviso] = useState(null);
   const [cargado, setCargado] = useState(false);
@@ -341,10 +353,14 @@ export default function TPMFMO() {
         setAtenciones(at.data.map(deAtencionDB));
         setLecturas(le.data.map(deLecturaDB));
         setJornadas(jo.data.map(deJornadaDB));
+        try {
+          const ai = await supabase.from("aires_montados").select("*").order("fecha_montaje", { ascending: false });
+          if (!ai.error && ai.data) setAires(ai.data.map(deAireDB));
+        } catch (e2) { /* tabla de aires aún no creada */ }
       } catch (e) {
         try {
           const c = JSON.parse(localStorage.getItem(claveCache));
-          if (c) { setEquipos(c.equipos || []); setAtenciones(c.atenciones || []); setLecturas(c.lecturas || []); setJornadas(c.jornadas || []); }
+          if (c) { setEquipos(c.equipos || []); setAtenciones(c.atenciones || []); setLecturas(c.lecturas || []); setJornadas(c.jornadas || []); setAires(c.aires || []); }
         } catch (e2) { /* sin caché */ }
       }
       setPendientes(leerOutbox().length);
@@ -356,8 +372,8 @@ export default function TPMFMO() {
   /* ---- caché local ---- */
   useEffect(() => {
     if (!cargado || !claveCache) return;
-    try { localStorage.setItem(claveCache, JSON.stringify({ equipos, atenciones, lecturas, jornadas })); } catch (e) { /* lleno */ }
-  }, [equipos, atenciones, lecturas, jornadas, cargado, claveCache]);
+    try { localStorage.setItem(claveCache, JSON.stringify({ equipos, atenciones, lecturas, jornadas, aires })); } catch (e) { /* lleno */ }
+  }, [equipos, atenciones, lecturas, jornadas, aires, cargado, claveCache]);
 
   const notificar = (m) => { setAviso(m); setTimeout(() => setAviso(null), 2600); };
 
@@ -436,8 +452,9 @@ export default function TPMFMO() {
       try {
         await supabase.from("equipos").delete().not("id", "is", null); /* cascada borra atenciones y lecturas */
         await supabase.from("jornadas").delete().not("id", "is", null);
+        try { await supabase.from("aires_montados").delete().not("id", "is", null); } catch (e) { /* sin tabla */ }
         escribirOutbox([]);
-        setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setTab("tablero");
+        setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setAires([]); setTab("tablero");
         notificar("Sistema reiniciado · datos borrados");
       } catch (e) { notificar("Error al vaciar: intenta de nuevo"); }
     });
@@ -459,9 +476,37 @@ export default function TPMFMO() {
     notificar(`Jornada registrada · ${j.gerencia} · semáforo del área reiniciado`);
   };
 
+  /* ---- aires montados (instalaciones nuevas) ---- */
+  const registrarAire = (a) => {
+    const nuevo = { id: uid(), ...a };
+    setAires((xs) => [nuevo, ...xs]);
+    persistir([{ tabla: "aires_montados", op: "upsert", datos: aAireDB(nuevo, usuario.id) }]);
+    notificar("Aire montado registrado");
+  };
+  const eliminarAire = (id) => {
+    const a = aires.find((x) => x.id === id);
+    pedirConfirmacion(`¿Eliminar el aire montado en "${a ? a.lugar : ""}"?`, () => {
+      setAires((xs) => xs.filter((x) => x.id !== id));
+      persistir([{ tabla: "aires_montados", op: "delete", id }]);
+      notificar("Aire montado eliminado");
+    });
+  };
+  const aireAlPlan = (a) => {
+    pedirConfirmacion(`¿Agregar "${a.lugar}" al inventario de mantenimiento preventivo? Se creará su ficha con preventivo cada 90 días.`, () => {
+      agregarEquipo({
+        nombre: a.codigoVisco || ("AIRE-" + (a.n || String(Date.now()).slice(-4))),
+        tipo: TIPOS_EQUIPO.includes(a.tipo) ? a.tipo : "Otro",
+        gerencia: a.lugar, ubicacion: a.lugar, marcaModelo: a.marca || "",
+        serial: a.serial || "", refrigerante: "No determinado", anio: (a.fechaMontaje || "").slice(0, 4),
+        capacidad: a.capacidad || "", criticidad: "B", intervaloDias: 90,
+        ultimoPrev: a.fechaMontaje || hoy(), tempMin: "", tempMax: "",
+      });
+    });
+  };
+
   const cerrarSesion = async () => {
     try { await supabase.auth.signOut(); } catch (e) { /* sin conexión */ }
-    setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setTab("tablero");
+    setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setAires([]); setTab("tablero");
   };
 
   const alertasPrev = useMemo(
@@ -478,7 +523,7 @@ export default function TPMFMO() {
   );
   const nAlertas = alertasPrev.length + alertasTemp.length;
 
-  const tabs = [["tablero", "Tablero"], ["equipos", "Equipos"], ["atencion", "Registrar"], ["jornadas", "Jornadas"], ["analisis", "Análisis"], ["guia", "Guía"]];
+  const tabs = [["tablero", "Tablero"], ["equipos", "Equipos"], ["atencion", "Registrar"], ["jornadas", "Jornadas"], ["aires", "Aires montados"], ["analisis", "Análisis"], ["guia", "Guía"]];
 
   if (!supabase) return <PantallaMensaje titulo="Falta configurar" texto="Abre src/App.jsx y pega el Project URL y la anon key del proyecto de Supabase en las dos líneas marcadas al inicio del archivo." />;
   if (!autListo) return <PantallaMensaje titulo="TPM FMO" texto="Iniciando…" />;
@@ -559,6 +604,7 @@ export default function TPMFMO() {
         {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} />}
         {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} />}
         {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} />}
+        {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} />}
         {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />}
         {tab === "guia" && <Guia onVaciar={vaciarTodo} onReal={cargarReal} />}
       </main>
@@ -1260,6 +1306,126 @@ function Jornadas({ equipos, jornadas, onRegistrar }) {
                   </div>
                 )}
                 {j.nota && <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 6 }}>{j.nota}</div>}
+              </div>
+            </div>
+          ))
+        )}
+      </section>
+    </div>
+  );
+}
+
+/* ============================================================ AIRES MONTADOS (instalaciones nuevas · inventario VISCO) */
+const TIPOS_AIRE = ["Split", "A/A ventana", "Central / compacto", "Otro"];
+const fmtFecha = (s) => (s ? String(s).slice(0, 10).split("-").reverse().join("/") : "—");
+
+function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
+  const [f, setF] = useState({ lugar: "", marca: "", tipo: "Split", capacidad: "", fechaMontaje: hoy(), serial: "", codigoVisco: "", nota: "" });
+  const [busca, setBusca] = useState("");
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const listo = f.lugar.trim() && f.fechaMontaje;
+  const guardar = () => {
+    if (!listo) return;
+    onRegistrar({ n: null, lugar: f.lugar.trim(), marca: f.marca.trim(), tipo: f.tipo, capacidad: f.capacidad.trim(), fechaMontaje: f.fechaMontaje, serial: f.serial.trim(), codigoVisco: f.codigoVisco.trim().toUpperCase(), nota: f.nota.trim() });
+    setF({ ...f, lugar: "", marca: "", capacidad: "", serial: "", codigoVisco: "", nota: "" });
+  };
+
+  const todos = aires || [];
+  const q = busca.trim().toLowerCase();
+  const lista = todos.filter((a) => !q || [a.lugar, a.marca, a.serial, a.codigoVisco, a.capacidad, a.tipo].join(" ").toLowerCase().includes(q));
+  const anio = new Date().getFullYear();
+  const esteAnio = todos.filter((a) => String(a.fechaMontaje || "").startsWith(String(anio))).length;
+  const porMarca = Object.entries(todos.reduce((acc, a) => { const m = a.marca || "Sin marca"; acc[m] = (acc[m] || 0) + 1; return acc; }, {})).sort((x, y) => y[1] - x[1]);
+  const porTipo = Object.entries(todos.reduce((acc, a) => { acc[a.tipo || "Otro"] = (acc[a.tipo || "Otro"] || 0) + 1; return acc; }, {}));
+  const chip = { fontFamily: mono, fontSize: 12, padding: "3px 10px", borderRadius: 6, background: T.bg, border: `1px solid ${T.line}` };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* resumen */}
+      <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
+        <h2 style={h2Style}>
+          Aires montados
+          <Ayuda texto="Registro de los equipos de aire acondicionado instalados (montados) por la sección, con su código VISCO, marca, capacidad, fecha y lugar de instalación. Es un inventario aparte del plan de mantenimiento preventivo: cuando un aire montado deba entrar al plan, usa el botón «Al plan de mantenimiento» de su tarjeta y se crea su ficha en Equipos." />
+        </h2>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginTop: 6 }}>
+          <Dato etiqueta="Total montados" valor={todos.length} />
+          <Dato etiqueta={`Montados en ${anio}`} valor={esteAnio} color={T.frio} />
+          <Dato etiqueta="Con código VISCO" valor={todos.filter((a) => a.codigoVisco).length} />
+        </div>
+        {(porTipo.length > 0 || porMarca.length > 0) && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+            {porTipo.map(([t, n]) => <span key={"t" + t} style={chip}>{t}: {n}</span>)}
+            {porMarca.map(([m, n]) => <span key={"m" + m} style={{ ...chip, background: "#FFF7E0" }}>{m}: {n}</span>)}
+          </div>
+        )}
+      </section>
+
+      {/* registrar nuevo */}
+      <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
+        <h2 style={h2Style}>Registrar aire montado</h2>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+          <Field label="Lugar de instalación" ancho={240}>
+            <input style={inputStyle} value={f.lugar} onChange={set("lugar")} placeholder="HOSPITAL – BANCO DE SANGRE" />
+          </Field>
+          <Field label="Marca">
+            <input style={inputStyle} value={f.marca} onChange={set("marca")} placeholder="Hyundai" />
+          </Field>
+          <Field label="Tipo">
+            <select style={inputStyle} value={f.tipo} onChange={set("tipo")}>
+              {TIPOS_AIRE.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </Field>
+          <Field label="Capacidad">
+            <input style={inputStyle} value={f.capacidad} onChange={set("capacidad")} placeholder="24000 BTU / 5 TR" />
+          </Field>
+          <Field label="Fecha de montaje">
+            <input style={inputStyle} type="date" value={f.fechaMontaje} onChange={set("fechaMontaje")} />
+          </Field>
+          <Field label="Código VISCO" ayuda="Código de inventario que la empresa asigna al condensador, por ejemplo VISCO-000018.">
+            <input style={inputStyle} value={f.codigoVisco} onChange={set("codigoVisco")} placeholder="VISCO-000018" />
+          </Field>
+          <Field label="Serial condensador (opcional)" ancho={220}>
+            <input style={inputStyle} value={f.serial} onChange={set("serial")} placeholder="540L610470241230120044" />
+          </Field>
+          <Field label="Observaciones (opcional)" ancho={220}>
+            <input style={inputStyle} value={f.nota} onChange={set("nota")} placeholder="Reemplazo del equipo anterior" />
+          </Field>
+        </div>
+        <button style={{ ...btn(T.orange), marginTop: 16, opacity: listo ? 1 : 0.5 }} disabled={!listo} onClick={guardar}>
+          Guardar aire montado
+        </button>
+      </section>
+
+      {/* listado */}
+      <section>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <h2 style={h2Style}>Inventario de aires montados ({lista.length})</h2>
+          <input style={{ ...inputStyle, width: 260 }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por lugar, VISCO, marca…" />
+        </div>
+        {!todos.length ? (
+          <p style={{ color: T.inkSoft }}>Aún no hay aires montados registrados. Carga el inventario VISCO (SQL) o registra el primero arriba.</p>
+        ) : !lista.length ? (
+          <p style={{ color: T.inkSoft }}>Ningún aire coincide con la búsqueda.</p>
+        ) : (
+          lista.map((a) => (
+            <div key={a.id} style={{ display: "flex", background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, marginBottom: 10, overflow: "hidden" }}>
+              <Franja color={T.frio} />
+              <div style={{ padding: "12px 16px", flex: 1 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+                  <strong style={{ fontFamily: display, fontSize: 19, textTransform: "uppercase" }}>{a.lugar}</strong>
+                  <span style={{ fontFamily: mono, fontSize: 13, color: T.frio, fontWeight: 700 }}>{a.codigoVisco || "sin código VISCO"}</span>
+                </div>
+                <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, marginTop: 2 }}>
+                  {[a.tipo, a.capacidad, a.marca].filter(Boolean).join(" · ")} · Montado el {fmtFecha(a.fechaMontaje)}
+                </div>
+                {a.serial && a.serial !== a.codigoVisco && (
+                  <div style={{ fontFamily: mono, fontSize: 11.5, color: T.inkSoft, marginTop: 4, wordBreak: "break-all" }}>S/N {a.serial}</div>
+                )}
+                {a.nota && <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 6 }}>{a.nota}</div>}
+                <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                  <button style={btnGhost(T.steel)} onClick={() => onAlPlan(a)}>→ Al plan de mantenimiento</button>
+                  <button style={btnGhost(T.danger)} onClick={() => onEliminar(a.id)}>Eliminar</button>
+                </div>
               </div>
             </div>
           ))
