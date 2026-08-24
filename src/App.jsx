@@ -28,8 +28,8 @@ const LOGO_LOCKUP = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAVQAAACgCAYAA
    · Project URL  (barra de direcciones del panel: https://xxxx.supabase.co)
    · anon public key  (Settings → API Keys)
    ============================================================= */
-const SUPABASE_URL = "https://irhmmilukjhwdrakwmuj.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlyaG1taWx1a2pod2RyYWt3bXVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMjYyODcsImV4cCI6MjEwMjkwMjI4N30.dYz1PSnI-_423dHizXd_JKPjDvj2nwbjMb1B7EtIEXw";
+const SUPABASE_URL = "PEGA_AQUI_TU_PROJECT_URL";
+const SUPABASE_ANON_KEY = "PEGA_AQUI_TU_ANON_KEY";
 
 const supabase = SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.startsWith("eyJ")
   ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
@@ -488,7 +488,7 @@ export default function TPMFMO() {
   return (
     <div style={{ minHeight: "100vh", background: T.bg, fontFamily: body, color: T.ink }}>
       <style>{`@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
-        input:focus, select:focus { border-color: ${T.steel} !important; }\n        @media (max-width: 640px) { .logo-fmo { height: 44px !important; } }`}</style>
+        input:focus, select:focus { border-color: ${T.steel} !important; }\n        @media (max-width: 640px) { .logo-fmo { height: 44px !important; } .fila-alerta-ubic { display: none !important; } } @media (min-width: 641px) { .fila-alerta-ubic-movil { display: none !important; } }`}</style>
 
       <header style={{ background: "#0D0D0D", color: "#fff", padding: "16px 16px 0" }}>
         <div style={{ maxWidth: 900, margin: "0 auto" }}>
@@ -733,20 +733,25 @@ function Tablero({ equipos, atenciones, lecturas, alertasPrev, alertasTemp, irA,
                       {abierto && (
                         <div style={{ borderTop: `1px solid ${T.line}` }}>
                           {grupos[g].map((it) => (
-                            <div key={it.e.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 12px", borderBottom: `1px solid ${T.bg}`, fontSize: 13 }}>
-                              <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 5, background: it.tipo === "temp" ? T.orange : it.s.color, flexShrink: 0 }} />
-                              <strong style={{ fontFamily: mono, fontSize: 12.5, whiteSpace: "nowrap" }}>{it.e.nombre}</strong>
-                              <CritBadge c={it.e.criticidad} />
-                              <span style={{ color: T.inkSoft, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.e.ubicacion}</span>
-                              {it.tipo === "prev" ? (
-                                <span style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 700, color: it.s.color, whiteSpace: "nowrap" }}>
-                                  {it.s.dias}/{it.e.intervaloDias} d · {(it.s.uso * 100).toFixed(0)}%
-                                </span>
-                              ) : (
-                                <span style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 700, color: T.danger, whiteSpace: "nowrap" }}>
-                                  {fmt(+it.l.valor)} °C (rango {it.e.tempMin !== "" && it.e.tempMin != null ? it.e.tempMin : "—"} a {it.e.tempMax !== "" && it.e.tempMax != null ? it.e.tempMax : "—"})
-                                </span>
-                              )}
+                            <div key={it.e.id} className="fila-alerta" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.bg}`, fontSize: 13 }}>
+                              <div className="fila-alerta-top" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 5, background: it.tipo === "temp" ? T.orange : it.s.color, flexShrink: 0 }} />
+                                <strong style={{ fontFamily: mono, fontSize: 12.5, whiteSpace: "nowrap" }}>{it.e.nombre}</strong>
+                                <CritBadge c={it.e.criticidad} />
+                                <span className="fila-alerta-ubic" style={{ color: T.inkSoft, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.e.ubicacion}</span>
+                                {it.tipo === "prev" ? (
+                                  <span style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 700, color: it.s.color, whiteSpace: "nowrap", flexShrink: 0 }}>
+                                    {it.s.dias}/{it.e.intervaloDias} d · {(it.s.uso * 100).toFixed(0)}%
+                                  </span>
+                                ) : (
+                                  <span style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 700, color: T.danger, whiteSpace: "nowrap", flexShrink: 0 }}>
+                                    {fmt(+it.l.valor)} °C
+                                  </span>
+                                )}
+                              </div>
+                              <div className="fila-alerta-ubic-movil" style={{ color: T.inkSoft, fontSize: 12, paddingLeft: 17, marginTop: 2 }}>
+                                {it.e.ubicacion}{it.tipo === "temp" ? ` · rango ${it.e.tempMin !== "" && it.e.tempMin != null ? it.e.tempMin : "—"} a ${it.e.tempMax !== "" && it.e.tempMax != null ? it.e.tempMax : "—"} °C` : ""}
+                              </div>
                             </div>
                           ))}
                         </div>
