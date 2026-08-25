@@ -89,6 +89,15 @@ const deAireDB = (r) => ({
   id: r.id, n: r.n == null ? null : +r.n, lugar: r.lugar, marca: r.marca || "", tipo: r.tipo || "Split",
   capacidad: r.capacidad || "", fechaMontaje: r.fecha_montaje || "", serial: r.serial || "",
   codigoVisco: r.codigo_visco || "", nota: r.nota || "",
+});
+/* observaciones / pendientes por equipo */
+const aObservacionDB = (o, userId) => ({
+  id: o.id, user_id: userId, equipo_id: o.equipoId, texto: o.texto, estado: o.estado || "pendiente",
+  autor: o.autor || "", origen: o.origen || "manual", resuelto: o.resuelto || null,
+});
+const deObservacionDB = (r) => ({
+  id: r.id, equipoId: r.equipo_id, texto: r.texto, estado: r.estado || "pendiente",
+  autor: r.autor || "", origen: r.origen || "manual", creado: r.creado || "", resuelto: r.resuelto || "",
 }); /* CVG | Ferrominera Orinoco, lockup oficial en blanco */
 
 const TIPOS_EQUIPO = ["Split", "A/A ventana", "Central / compacto", "Aire de precisión", "Cava / cuarto frío", "Chiller", "Nevera / congelador", "Bebedero", "Otro"];
@@ -267,6 +276,7 @@ export default function TPMFMO() {
   const [lecturas, setLecturas] = useState([]);
   const [jornadas, setJornadas] = useState([]);
   const [aires, setAires] = useState([]);
+  const [observaciones, setObservaciones] = useState([]);
   const [preseleccion, setPreseleccion] = useState(null); /* equipo elegido desde su tarjeta para registrar falla/preventivo */
   const [tab, setTab] = useState("tablero");
   const [aviso, setAviso] = useState(null);
@@ -358,10 +368,14 @@ export default function TPMFMO() {
           const ai = await supabase.from("aires_montados").select("*").order("fecha_montaje", { ascending: false });
           if (!ai.error && ai.data) setAires(ai.data.map(deAireDB));
         } catch (e2) { /* tabla de aires aún no creada */ }
+        try {
+          const ob = await supabase.from("observaciones").select("*").order("creado", { ascending: false });
+          if (!ob.error && ob.data) setObservaciones(ob.data.map(deObservacionDB));
+        } catch (e3) { /* tabla de observaciones aún no creada */ }
       } catch (e) {
         try {
           const c = JSON.parse(localStorage.getItem(claveCache));
-          if (c) { setEquipos(c.equipos || []); setAtenciones(c.atenciones || []); setLecturas(c.lecturas || []); setJornadas(c.jornadas || []); setAires(c.aires || []); }
+          if (c) { setEquipos(c.equipos || []); setAtenciones(c.atenciones || []); setLecturas(c.lecturas || []); setJornadas(c.jornadas || []); setAires(c.aires || []); setObservaciones(c.observaciones || []); }
         } catch (e2) { /* sin caché */ }
       }
       setPendientes(leerOutbox().length);
@@ -373,8 +387,8 @@ export default function TPMFMO() {
   /* ---- caché local ---- */
   useEffect(() => {
     if (!cargado || !claveCache) return;
-    try { localStorage.setItem(claveCache, JSON.stringify({ equipos, atenciones, lecturas, jornadas, aires })); } catch (e) { /* lleno */ }
-  }, [equipos, atenciones, lecturas, jornadas, aires, cargado, claveCache]);
+    try { localStorage.setItem(claveCache, JSON.stringify({ equipos, atenciones, lecturas, jornadas, aires, observaciones })); } catch (e) { /* lleno */ }
+  }, [equipos, atenciones, lecturas, jornadas, aires, observaciones, cargado, claveCache]);
 
   const notificar = (m) => { setAviso(m); setTimeout(() => setAviso(null), 2600); };
 
@@ -429,6 +443,25 @@ export default function TPMFMO() {
     persistir([{ tabla: "lecturas", op: "upsert", datos: aLecturaDB(nueva, usuario.id) }]);
     notificar(l.fuera ? "Lectura registrada · ¡FUERA DE RANGO!" : "Lectura de temperatura registrada");
   };
+  /* ---- observaciones / pendientes por equipo ---- */
+  const agregarObservacion = (o) => {
+    const nueva = { id: uid(), estado: "pendiente", creado: new Date().toISOString(), resuelto: "", ...o };
+    setObservaciones((xs) => [nueva, ...xs]);
+    persistir([{ tabla: "observaciones", op: "upsert", datos: aObservacionDB(nueva, usuario.id) }]);
+    notificar("Pendiente anotado en el equipo");
+  };
+  const resolverObservacion = (id) => {
+    const o = observaciones.find((x) => x.id === id);
+    if (!o) return;
+    const act = { ...o, estado: o.estado === "resuelta" ? "pendiente" : "resuelta", resuelto: o.estado === "resuelta" ? "" : new Date().toISOString() };
+    setObservaciones((xs) => xs.map((x) => (x.id === id ? act : x)));
+    persistir([{ tabla: "observaciones", op: "upsert", datos: aObservacionDB(act, usuario.id) }]);
+    notificar(act.estado === "resuelta" ? "Pendiente marcado como resuelto" : "Pendiente reabierto");
+  };
+  const eliminarObservacion = (id) => {
+    setObservaciones((xs) => xs.filter((x) => x.id !== id));
+    persistir([{ tabla: "observaciones", op: "delete", id }]);
+  };
   const cargarEjemplo = () => {
     const d = datosDeEjemplo();
     setEquipos(d.equipos); setAtenciones(d.atenciones); setLecturas(d.lecturas);
@@ -464,8 +497,9 @@ export default function TPMFMO() {
         await supabase.from("equipos").delete().not("id", "is", null); /* cascada borra atenciones y lecturas */
         await supabase.from("jornadas").delete().not("id", "is", null);
         try { await supabase.from("aires_montados").delete().not("id", "is", null); } catch (e) { /* sin tabla */ }
+        try { await supabase.from("observaciones").delete().not("id", "is", null); } catch (e) { /* sin tabla */ }
         escribirOutbox([]);
-        setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setAires([]); setTab("tablero");
+        setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setAires([]); setObservaciones([]); setTab("tablero");
         notificar("Sistema reiniciado · datos borrados");
       } catch (e) { notificar("Error al vaciar: intenta de nuevo"); }
     });
@@ -517,7 +551,7 @@ export default function TPMFMO() {
 
   const cerrarSesion = async () => {
     try { await supabase.auth.signOut(); } catch (e) { /* sin conexión */ }
-    setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setAires([]); setTab("tablero");
+    setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setAires([]); setObservaciones([]); setTab("tablero");
   };
 
   const alertasPrev = useMemo(
@@ -611,9 +645,9 @@ export default function TPMFMO() {
       )}
 
       <main style={{ maxWidth: 900, margin: "0 auto", padding: "20px 16px 60px" }}>
-        {tab === "tablero" && <Tablero equipos={equipos} atenciones={atenciones} lecturas={lecturas} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
-        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} />}
-        {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} />}
+        {tab === "tablero" && <Tablero equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
+        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} onAgregarObs={agregarObservacion} onResolverObs={resolverObservacion} onEliminarObs={eliminarObservacion} />}
+        {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} onObservacion={agregarObservacion} />}
         {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} />}
         {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} />}
         {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />}
@@ -685,7 +719,7 @@ function Login() {
 }
 
 /* ============================================================ TABLERO */
-function Tablero({ equipos, atenciones, lecturas, alertasPrev, alertasTemp, irA, onEjemplo, onReal }) {
+function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPrev, alertasTemp, irA, onEjemplo, onReal }) {
   const [busqueda, setBusqueda] = useState("");
   const [abiertas, setAbiertas] = useState({});
   const [filtroAlerta, setFiltroAlerta] = useState("danger");
@@ -860,6 +894,7 @@ function Tablero({ equipos, atenciones, lecturas, alertasPrev, alertasTemp, irA,
               const ls = lecturas.filter((l) => l.equipoId === e.id);
               return ls.length && ls[0].fuera;
             }).length;
+            const nPend = observaciones.filter((o) => o.estado !== "resuelta" && grupos[g].some((e) => e.id === o.equipoId)).length;
             const abierta = q ? true : !!abiertas[g];
             return (
               <div key={g} style={{ marginBottom: 10, border: `1.5px solid ${T.line}`, borderRadius: 8, background: T.panel, overflow: "hidden" }}>
@@ -874,6 +909,7 @@ function Tablero({ equipos, atenciones, lecturas, alertasPrev, alertasTemp, irA,
                     {nRojo > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#fff", background: T.danger, borderRadius: 10, padding: "1px 8px" }}>{nRojo} urgente{nRojo === 1 ? "" : "s"}</span>}
                     {nAmar > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: T.ink, background: T.warn, borderRadius: 10, padding: "1px 8px" }}>{nAmar} próximo{nAmar === 1 ? "" : "s"}</span>}
                     {nTemp > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#141414", background: T.orange, borderRadius: 10, padding: "1px 8px" }}>{nTemp} temp</span>}
+                    {nPend > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#141414", background: T.warn, borderRadius: 10, padding: "1px 8px" }}>{nPend} pend.</span>}
                     {nRojo + nAmar + nTemp === 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: T.ok }}>al día</span>}
                   </span>
                 </button>
@@ -892,6 +928,7 @@ function Tablero({ equipos, atenciones, lecturas, alertasPrev, alertasTemp, irA,
                               <CritBadge c={e.criticidad} />
                             </div>
                             <div style={{ fontSize: 12, color: T.inkSoft }}>{e.tipo} · {e.ubicacion}</div>
+                            {(() => { const np = observaciones.filter((o) => o.equipoId === e.id && o.estado !== "resuelta").length; return np > 0 ? <div style={{ marginTop: 4, fontFamily: mono, fontSize: 11.5, fontWeight: 700, color: "#141414", background: T.warn, borderRadius: 10, padding: "1px 8px", display: "inline-block" }}>{np} pendiente{np === 1 ? "" : "s"}</div> : null; })()}
                             <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, fontFamily: mono, fontSize: 13 }}>
                               <Dato etiqueta="Disp. 90d" valor={pct(ind.disp90)} color={colorDisp(ind.disp90)} />
                               <Dato etiqueta="Fallas 90d" valor={`${ind.fallas90}`} color={ind.fallas90 > 2 ? T.danger : T.ink} />
@@ -974,7 +1011,7 @@ function FichaCampos({ f, set, gerenciasExistentes, idLista }) {
   );
 }
 
-function Equipos({ equipos, atenciones, lecturas, onAgregar, onEliminar, onEditar, onRegistrar }) {
+function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar, onEliminar, onEditar, onRegistrar, onAgregarObs, onResolverObs, onEliminarObs }) {
   const vacio = { nombre: "", tipo: TIPOS_EQUIPO[0], gerencia: "", ubicacion: "", marcaModelo: "", serial: "", refrigerante: REFRIGERANTES[0], anio: "", capacidad: "", criticidad: "B", intervaloDias: "90", ultimoPrev: hoy(), tempMin: "", tempMax: "" };
   const [f, setF] = useState(vacio);
   const [busqueda, setBusqueda] = useState("");
@@ -982,6 +1019,10 @@ function Equipos({ equipos, atenciones, lecturas, onAgregar, onEliminar, onEdita
   const [editando, setEditando] = useState(null);
   const [fe, setFe] = useState(vacio);
   const [histAbierto, setHistAbierto] = useState({});
+  const [obsAbierto, setObsAbierto] = useState({});
+  const [obsTexto, setObsTexto] = useState({});
+  const [obsAutor, setObsAutor] = useState({});
+  const [verResueltas, setVerResueltas] = useState({});
   const gerenciasExistentes = [...new Set(equipos.map(gerenciaDe))].sort();
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const setE = (k) => (e) => setFe({ ...fe, [k]: e.target.value });
@@ -1086,6 +1127,15 @@ function Equipos({ equipos, atenciones, lecturas, onAgregar, onEliminar, onEdita
                   const ind = indicadoresEquipo(e, atenciones, lecturas);
                   const ed = edad(e.anio);
                   const hist = atenciones.filter((a) => a.equipoId === e.id).slice().sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+                  const pend = observaciones.filter((o) => o.equipoId === e.id && o.estado !== "resuelta");
+                  const resueltas = observaciones.filter((o) => o.equipoId === e.id && o.estado === "resuelta");
+                  const verObs = !!obsAbierto[e.id];
+                  const agregarNota = () => {
+                    const t = (obsTexto[e.id] || "").trim();
+                    if (!t) return;
+                    onAgregarObs({ equipoId: e.id, texto: t, autor: (obsAutor[e.id] || "").trim(), origen: "manual" });
+                    setObsTexto({ ...obsTexto, [e.id]: "" });
+                  };
                   const nPrev = hist.filter((a) => a.tipo === "preventiva").length;
                   const nFallas = hist.length - nPrev;
                   const verHist = !!histAbierto[e.id];
@@ -1098,7 +1148,10 @@ function Equipos({ equipos, atenciones, lecturas, onAgregar, onEliminar, onEdita
                             <strong style={{ fontFamily: display, fontSize: 20, textTransform: "uppercase" }}>{e.nombre}</strong>
                             <CritBadge c={e.criticidad} />
                           </span>
-                          <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 600, color: s.color }}>{s.etiqueta}</span>
+                          <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            {pend.length > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#141414", background: T.warn, borderRadius: 10, padding: "1px 9px" }}>{pend.length} pendiente{pend.length === 1 ? "" : "s"}</span>}
+                            <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 600, color: s.color }}>{s.etiqueta}</span>
+                          </span>
                         </div>
                         <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, margin: "4px 0 2px" }}>
                           {e.tipo}{e.marcaModelo ? ` · ${e.marcaModelo}` : ""}{e.capacidad ? ` · ${e.capacidad}` : ""} · {e.ubicacion}
@@ -1119,11 +1172,51 @@ function Equipos({ equipos, atenciones, lecturas, onAgregar, onEliminar, onEdita
                           <button style={btnGhost(T.steel)} onClick={() => abrirEdicion(e)}>Editar</button>
                           <button style={btnGhost(T.danger)} onClick={() => onRegistrar(e.id, "correctiva")}>+ Falla</button>
                           <button style={btnGhost(T.ok)} onClick={() => onRegistrar(e.id, "preventiva")}>+ Preventivo</button>
+                          <button style={{ ...btnGhost(pend.length > 0 ? T.warn : T.inkSoft) }} onClick={() => setObsAbierto({ ...obsAbierto, [e.id]: !verObs })}>
+                            {verObs ? "Ocultar pendientes" : `Pendientes (${pend.length})`}
+                          </button>
                           <button style={btnGhost(T.inkSoft)} onClick={() => setHistAbierto({ ...histAbierto, [e.id]: !verHist })}>
                             {verHist ? "Ocultar historial" : `Historial (${hist.length})`}
                           </button>
                           <button style={btnGhost(T.inkSoft)} onClick={() => onEliminar(e.id)}>Eliminar</button>
                         </div>
+
+                        {verObs && (
+                          <div style={{ marginTop: 10, borderTop: `1px solid ${T.line}`, paddingTop: 8 }}>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
+                              <input style={{ ...inputStyle, flex: 1, minWidth: 200 }} value={obsTexto[e.id] || ""} onChange={(ev) => setObsTexto({ ...obsTexto, [e.id]: ev.target.value })} onKeyDown={(ev) => { if (ev.key === "Enter") agregarNota(); }} placeholder="Ej: hay que limpiar el condensador" />
+                              <input style={{ ...inputStyle, width: 130 }} value={obsAutor[e.id] || ""} onChange={(ev) => setObsAutor({ ...obsAutor, [e.id]: ev.target.value })} placeholder="Quién (opcional)" />
+                              <button style={btn(T.orange)} onClick={agregarNota}>Anotar</button>
+                            </div>
+                            {!pend.length && !resueltas.length && <p style={{ fontSize: 13, color: T.inkSoft, margin: "8px 0 0" }}>Sin observaciones. Anota lo que detecte el técnico (limpieza, repuesto por pedir, revisión pendiente…).</p>}
+                            {pend.map((o) => (
+                              <div key={o.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "7px 0", borderBottom: `1px solid ${T.line}`, fontSize: 14 }}>
+                                <span style={{ width: 10, height: 10, borderRadius: 5, background: T.warn, marginTop: 5, flexShrink: 0 }} />
+                                <span style={{ flex: 1 }}>
+                                  {o.texto}
+                                  <span style={{ display: "block", fontFamily: mono, fontSize: 11, color: T.inkSoft }}>
+                                    {fmtF(o.creado)}{o.autor ? ` · ${o.autor}` : ""}{o.origen && o.origen !== "manual" ? ` · desde ${o.origen === "preventiva" ? "preventivo" : "falla"}` : ""}
+                                  </span>
+                                </span>
+                                <button style={btnGhost(T.ok)} onClick={() => onResolverObs(o.id)}>Resuelto</button>
+                                <button style={btnGhost(T.inkSoft)} onClick={() => onEliminarObs(o.id)}>×</button>
+                              </div>
+                            ))}
+                            {resueltas.length > 0 && (
+                              <button style={{ ...btnGhost(T.inkSoft), marginTop: 8 }} onClick={() => setVerResueltas({ ...verResueltas, [e.id]: !verResueltas[e.id] })}>
+                                {verResueltas[e.id] ? "Ocultar resueltas" : `Ver resueltas (${resueltas.length})`}
+                              </button>
+                            )}
+                            {verResueltas[e.id] && resueltas.map((o) => (
+                              <div key={o.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${T.line}`, fontSize: 13, color: T.inkSoft }}>
+                                <span style={{ marginTop: 1, flexShrink: 0, color: T.ok }}>✓</span>
+                                <span style={{ flex: 1, textDecoration: "line-through" }}>{o.texto}</span>
+                                <button style={btnGhost(T.inkSoft)} onClick={() => onResolverObs(o.id)}>Reabrir</button>
+                                <button style={btnGhost(T.inkSoft)} onClick={() => onEliminarObs(o.id)}>×</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         {verHist && (
                           <div style={{ marginTop: 10, borderTop: `1px solid ${T.line}`, paddingTop: 8 }}>
@@ -1179,10 +1272,11 @@ function Equipos({ equipos, atenciones, lecturas, onAgregar, onEliminar, onEdita
 }
 
 /* ============================================================ REGISTRAR (atenciones + lecturas) */
-function Registrar({ equipos, onAtencion, onLectura, preseleccion }) {
+function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion }) {
   const [modo, setModo] = useState("correctiva");
   const [f, setF] = useState({ equipoId: "", fecha: hoy(), causa: "", horasFuera: "", kgGas: "", tecnico: "", nota: "", valor: "" });
   const [checks, setChecks] = useState({});
+  const [obsPend, setObsPend] = useState("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   /* llegada desde la tarjeta de un equipo: lo deja seleccionado y en el modo pedido */
@@ -1221,6 +1315,8 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion }) {
       kgGas: f.kgGas === "" ? 0 : +f.kgGas, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
       tareas: esPrev ? tareas.filter((t) => checks[t]) : [],
     });
+    if (obsPend.trim() && onObservacion) onObservacion({ equipoId: f.equipoId, texto: obsPend.trim(), autor: f.tecnico.trim(), origen: modo });
+    setObsPend("");
     setF({ ...f, causa: "", horasFuera: "", kgGas: "", nota: "" });
     setChecks({});
   };
@@ -1292,6 +1388,12 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion }) {
           {!esLectura && (
             <Field label="Observaciones (opcional)" ancho={240}>
               <input style={inputStyle} value={f.nota} onChange={set("nota")} placeholder={esFalla ? "Se reemplazó capacitor del ventilador" : "Sin novedades"} />
+            </Field>
+          )}
+
+          {!esLectura && (
+            <Field label="Pendiente detectado (opcional)" ancho={240} ayuda="Algo que quedó por hacer y que este equipo necesita a futuro (limpiar condensador, pedir un repuesto, revisar una fuga). Se guarda como pendiente en la ficha del equipo y aparece resaltado hasta que se marque como resuelto.">
+              <input style={inputStyle} value={obsPend} onChange={(e) => setObsPend(e.target.value)} placeholder="Hay que limpiar el condensador" />
             </Field>
           )}
         </div>
