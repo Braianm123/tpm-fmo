@@ -267,6 +267,7 @@ export default function TPMFMO() {
   const [lecturas, setLecturas] = useState([]);
   const [jornadas, setJornadas] = useState([]);
   const [aires, setAires] = useState([]);
+  const [preseleccion, setPreseleccion] = useState(null); /* equipo elegido desde su tarjeta para registrar falla/preventivo */
   const [tab, setTab] = useState("tablero");
   const [aviso, setAviso] = useState(null);
   const [cargado, setCargado] = useState(false);
@@ -386,6 +387,16 @@ export default function TPMFMO() {
     setEquipos((xs) => [...xs, nuevo]);
     persistir([{ tabla: "equipos", op: "upsert", datos: aEquipoDB(nuevo, usuario.id) }]);
     notificar("Equipo agregado al inventario");
+  };
+  const editarEquipo = (act) => {
+    setEquipos((xs) => xs.map((e) => (e.id === act.id ? act : e)));
+    persistir([{ tabla: "equipos", op: "upsert", datos: aEquipoDB(act, usuario.id) }]);
+    notificar("Ficha del equipo actualizada");
+  };
+  const irARegistrar = (equipoId, modo) => {
+    setPreseleccion({ equipoId, modo, ts: Date.now() });
+    setTab("atencion");
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const eliminarEquipo = (id) => {
     const eq = equipos.find((e) => e.id === id);
@@ -601,8 +612,8 @@ export default function TPMFMO() {
 
       <main style={{ maxWidth: 900, margin: "0 auto", padding: "20px 16px 60px" }}>
         {tab === "tablero" && <Tablero equipos={equipos} atenciones={atenciones} lecturas={lecturas} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
-        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} />}
-        {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} />}
+        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} />}
+        {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} />}
         {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} />}
         {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} />}
         {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />}
@@ -908,116 +919,279 @@ function Tablero({ equipos, atenciones, lecturas, alertasPrev, alertasTemp, irA,
 }
 
 /* ============================================================ EQUIPOS */
-function Equipos({ equipos, atenciones, lecturas, onAgregar, onEliminar }) {
-  const [f, setF] = useState({ nombre: "", tipo: TIPOS_EQUIPO[0], gerencia: "", ubicacion: "", marcaModelo: "", serial: "", refrigerante: REFRIGERANTES[0], anio: "", capacidad: "", criticidad: "B", intervaloDias: "90", ultimoPrev: hoy(), tempMin: "", tempMax: "" });
+/* campos de la ficha técnica — compartidos por "nuevo equipo" y "editar" */
+function FichaCampos({ f, set, gerenciasExistentes, idLista }) {
+  return (
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
+      <Field label="Código / nombre" ayuda="Identificador del equipo. Si la empresa maneja códigos de activo, úsalo (ej: AA-EDF2-014).">
+        <input style={inputStyle} value={f.nombre} onChange={set("nombre")} placeholder="AA-EDF2-014" />
+      </Field>
+      <Field label="Tipo">
+        <select style={inputStyle} value={f.tipo} onChange={set("tipo")}>{TIPOS_EQUIPO.map((t) => <option key={t}>{t}</option>)}</select>
+      </Field>
+      <Field label="Área / Gerencia" ayuda="La gerencia o área de Ferrominera donde está el equipo. El tablero agrupa los equipos por este campo. Escribe el nombre o elige uno ya usado en la lista para mantener los nombres uniformes.">
+        <>
+          <input style={inputStyle} list={idLista} value={f.gerencia} onChange={set("gerencia")} placeholder="Edif. Administrativo Sede" />
+          <datalist id={idLista}>
+            {gerenciasExistentes.map((g) => <option key={g} value={g} />)}
+          </datalist>
+        </>
+      </Field>
+      <Field label="Ubicación específica" ayuda="El punto exacto dentro del área: piso, sala, nave. Permite que el técnico encuentre el equipo sin preguntar.">
+        <input style={inputStyle} value={f.ubicacion} onChange={set("ubicacion")} placeholder="Piso 2 · oficina de planificación" />
+      </Field>
+      <Field label="Marca / modelo (opcional)">
+        <input style={inputStyle} value={f.marcaModelo} onChange={set("marcaModelo")} placeholder="Carrier 38QRF24" />
+      </Field>
+      <Field label="Serial (opcional)" ayuda="Número de serie de fábrica que aparece en la placa del equipo. Útil para garantías y pedidos de repuestos. No todos los equipos lo tienen registrado — se puede completar después al visitarlos.">
+        <input style={inputStyle} value={f.serial} onChange={set("serial")} placeholder="5804K05926" />
+      </Field>
+      <Field label="Refrigerante" ayuda="Tipo de gas que usa el equipo. Permite saber qué comprar, controlar el consumo y planificar la transición de gases descontinuados como el R-22.">
+        <select style={inputStyle} value={f.refrigerante} onChange={set("refrigerante")}>{REFRIGERANTES.map((r) => <option key={r}>{r}</option>)}</select>
+      </Field>
+      <Field label="Año instalación (opcional)" ayuda="Permite calcular la edad del equipo. Un equipo viejo con fallas repetidas es un candidato documentado a reemplazo.">
+        <input style={inputStyle} type="number" min="1960" max="2030" value={f.anio} onChange={set("anio")} placeholder="2015" />
+      </Field>
+      <Field label="Capacidad (opcional)">
+        <input style={inputStyle} value={f.capacidad} onChange={set("capacidad")} placeholder="24.000 BTU" />
+      </Field>
+      <Field label="Criticidad" ayuda="A: su falla afecta operaciones o áreas sensibles (sala eléctrica, servidores, comedor). B: afecta confort. C: hay respaldo o impacto menor.">
+        <select style={inputStyle} value={f.criticidad} onChange={set("criticidad")}>{CRITICIDAD.map((c) => <option key={c}>{c}</option>)}</select>
+      </Field>
+      <Field label="Preventivo cada (días)" ayuda="Frecuencia del preventivo en días calendario. Referencias: splits y centrales 90 días; precisión y cavas críticas 30–60.">
+        <input style={inputStyle} type="number" min="1" value={f.intervaloDias} onChange={set("intervaloDias")} />
+      </Field>
+      <Field label="Último preventivo">
+        <input style={inputStyle} type="date" value={f.ultimoPrev} onChange={set("ultimoPrev")} />
+      </Field>
+      <Field label="Temp. objetivo mín (°C)" ayuda="Rango de temperatura esperado del equipo (opcional). Si una lectura sale del rango, el tablero lo alerta. Ej: cava de alimentos 2 a 6 °C; oficina climatizada 22 a 26 °C.">
+        <input style={inputStyle} type="number" step="0.5" value={f.tempMin} onChange={set("tempMin")} placeholder="2" />
+      </Field>
+      <Field label="Temp. objetivo máx (°C)">
+        <input style={inputStyle} type="number" step="0.5" value={f.tempMax} onChange={set("tempMax")} placeholder="6" />
+      </Field>
+    </div>
+  );
+}
+
+function Equipos({ equipos, atenciones, lecturas, onAgregar, onEliminar, onEditar, onRegistrar }) {
+  const vacio = { nombre: "", tipo: TIPOS_EQUIPO[0], gerencia: "", ubicacion: "", marcaModelo: "", serial: "", refrigerante: REFRIGERANTES[0], anio: "", capacidad: "", criticidad: "B", intervaloDias: "90", ultimoPrev: hoy(), tempMin: "", tempMax: "" };
+  const [f, setF] = useState(vacio);
+  const [busqueda, setBusqueda] = useState("");
+  const [abiertas, setAbiertas] = useState({});
+  const [editando, setEditando] = useState(null);
+  const [fe, setFe] = useState(vacio);
+  const [histAbierto, setHistAbierto] = useState({});
   const gerenciasExistentes = [...new Set(equipos.map(gerenciaDe))].sort();
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const setE = (k) => (e) => setFe({ ...fe, [k]: e.target.value });
+
+  const valida = (x) => x.nombre.trim() && x.gerencia.trim() && x.ubicacion.trim() && +x.intervaloDias > 0;
+  const limpiar = (x) => ({ ...x, nombre: x.nombre.trim(), gerencia: x.gerencia.trim(), ubicacion: x.ubicacion.trim(), marcaModelo: x.marcaModelo.trim(), serial: x.serial.trim(), capacidad: x.capacidad.trim(), intervaloDias: +x.intervaloDias });
 
   const agregar = () => {
-    if (!f.nombre.trim() || !f.gerencia.trim() || !f.ubicacion.trim() || !(+f.intervaloDias > 0)) return;
-    onAgregar({ ...f, nombre: f.nombre.trim(), gerencia: f.gerencia.trim(), ubicacion: f.ubicacion.trim(), marcaModelo: f.marcaModelo.trim(), serial: f.serial.trim(), capacidad: f.capacidad.trim(), intervaloDias: +f.intervaloDias });
+    if (!valida(f)) return;
+    onAgregar(limpiar(f));
     setF({ ...f, nombre: "", ubicacion: "", marcaModelo: "", serial: "", capacidad: "", anio: "", tempMin: "", tempMax: "" });
+  };
+  const abrirEdicion = (e) => {
+    setFe({
+      nombre: e.nombre || "", tipo: e.tipo || TIPOS_EQUIPO[0], gerencia: gerenciaDe(e), ubicacion: e.ubicacion || "",
+      marcaModelo: e.marcaModelo || "", serial: e.serial || "", refrigerante: e.refrigerante || REFRIGERANTES[0],
+      anio: e.anio == null ? "" : String(e.anio), capacidad: e.capacidad || "", criticidad: e.criticidad || "B",
+      intervaloDias: String(e.intervaloDias || 90), ultimoPrev: e.ultimoPrev || hoy(),
+      tempMin: e.tempMin == null ? "" : String(e.tempMin), tempMax: e.tempMax == null ? "" : String(e.tempMax),
+    });
+    setEditando(e.id);
+  };
+  const guardarEdicion = () => {
+    if (!valida(fe)) return;
+    onEditar({ ...limpiar(fe), id: editando });
+    setEditando(null);
   };
 
   const edad = (anio) => {
     const a = +anio;
     return a > 1950 ? new Date().getFullYear() - a : null;
   };
+  const fmtF = (s) => (s ? String(s).slice(0, 10).split("-").reverse().join("/") : "—");
+
+  /* agrupación por área con buscador (mismo criterio del Tablero) */
+  const q = busqueda.trim().toLowerCase();
+  const coincide = (e) => (e.nombre + " " + e.ubicacion + " " + e.tipo + " " + (e.serial || "") + " " + (e.marcaModelo || "")).toLowerCase().includes(q);
+  const grupos = {};
+  equipos.forEach((e) => { const g = gerenciaDe(e); (grupos[g] = grupos[g] || []).push(e); });
+  const nombresArea = Object.keys(grupos).sort((a, b) => a.localeCompare(b));
+  const visibles = nombresArea.filter((g) => !q || g.toLowerCase().includes(q) || grupos[g].some(coincide));
+  const enArea = (g) => grupos[g].filter((e) => !q || g.toLowerCase().includes(q) || coincide(e));
+  const totalVisibles = visibles.reduce((n, g) => n + enArea(g).length, 0);
+  const todasAbiertas = Object.fromEntries(nombresArea.map((g) => [g, true]));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
         <h2 style={h2Style}>Nuevo equipo · ficha técnica</h2>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-          <Field label="Código / nombre" ayuda="Identificador del equipo. Si la empresa maneja códigos de activo, úsalo (ej: AA-EDF2-014).">
-            <input style={inputStyle} value={f.nombre} onChange={set("nombre")} placeholder="AA-EDF2-014" />
-          </Field>
-          <Field label="Tipo">
-            <select style={inputStyle} value={f.tipo} onChange={set("tipo")}>{TIPOS_EQUIPO.map((t) => <option key={t}>{t}</option>)}</select>
-          </Field>
-          <Field label="Área / Gerencia" ayuda="La gerencia o área de Ferrominera donde está el equipo. El tablero agrupa los equipos por este campo. Escribe el nombre o elige uno ya usado en la lista para mantener los nombres uniformes.">
-            <>
-              <input style={inputStyle} list="lista-gerencias" value={f.gerencia} onChange={set("gerencia")} placeholder="Edif. Administrativo Sede" />
-              <datalist id="lista-gerencias">
-                {gerenciasExistentes.map((g) => <option key={g} value={g} />)}
-              </datalist>
-            </>
-          </Field>
-          <Field label="Ubicación específica" ayuda="El punto exacto dentro del área: piso, sala, nave. Permite que el técnico encuentre el equipo sin preguntar.">
-            <input style={inputStyle} value={f.ubicacion} onChange={set("ubicacion")} placeholder="Piso 2 · oficina de planificación" />
-          </Field>
-          <Field label="Marca / modelo (opcional)">
-            <input style={inputStyle} value={f.marcaModelo} onChange={set("marcaModelo")} placeholder="Carrier 38QRF24" />
-          </Field>
-          <Field label="Serial (opcional)" ayuda="Número de serie de fábrica que aparece en la placa del equipo. Útil para garantías y pedidos de repuestos. No todos los equipos lo tienen registrado — se puede completar después al visitarlos.">
-            <input style={inputStyle} value={f.serial} onChange={set("serial")} placeholder="5804K05926" />
-          </Field>
-          <Field label="Refrigerante" ayuda="Tipo de gas que usa el equipo. Permite saber qué comprar, controlar el consumo y planificar la transición de gases descontinuados como el R-22.">
-            <select style={inputStyle} value={f.refrigerante} onChange={set("refrigerante")}>{REFRIGERANTES.map((r) => <option key={r}>{r}</option>)}</select>
-          </Field>
-          <Field label="Año instalación (opcional)" ayuda="Permite calcular la edad del equipo. Un equipo viejo con fallas repetidas es un candidato documentado a reemplazo.">
-            <input style={inputStyle} type="number" min="1960" max="2030" value={f.anio} onChange={set("anio")} placeholder="2015" />
-          </Field>
-          <Field label="Capacidad (opcional)">
-            <input style={inputStyle} value={f.capacidad} onChange={set("capacidad")} placeholder="24.000 BTU" />
-          </Field>
-          <Field label="Criticidad" ayuda="A: su falla afecta operaciones o áreas sensibles (sala eléctrica, servidores, comedor). B: afecta confort. C: hay respaldo o impacto menor.">
-            <select style={inputStyle} value={f.criticidad} onChange={set("criticidad")}>{CRITICIDAD.map((c) => <option key={c}>{c}</option>)}</select>
-          </Field>
-          <Field label="Preventivo cada (días)" ayuda="Frecuencia del preventivo en días calendario. Referencias: splits y centrales 90 días; precisión y cavas críticas 30–60.">
-            <input style={inputStyle} type="number" min="1" value={f.intervaloDias} onChange={set("intervaloDias")} />
-          </Field>
-          <Field label="Último preventivo">
-            <input style={inputStyle} type="date" value={f.ultimoPrev} onChange={set("ultimoPrev")} />
-          </Field>
-          <Field label="Temp. objetivo mín (°C)" ayuda="Rango de temperatura esperado del equipo (opcional). Si una lectura sale del rango, el tablero lo alerta. Ej: cava de alimentos 2 a 6 °C; oficina climatizada 22 a 26 °C.">
-            <input style={inputStyle} type="number" step="0.5" value={f.tempMin} onChange={set("tempMin")} placeholder="2" />
-          </Field>
-          <Field label="Temp. objetivo máx (°C)">
-            <input style={inputStyle} type="number" step="0.5" value={f.tempMax} onChange={set("tempMax")} placeholder="6" />
-          </Field>
-        </div>
+        <FichaCampos f={f} set={set} gerenciasExistentes={gerenciasExistentes} idLista="lista-gerencias" />
         <button style={{ ...btn(T.orange), marginTop: 12 }} onClick={agregar}>Agregar equipo</button>
       </section>
 
-      {equipos.map((e) => {
-        const s = estadoEquipo(e);
-        const ind = indicadoresEquipo(e, atenciones, lecturas);
-        const ed = edad(e.anio);
+      <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
+        <h2 style={h2Style}>
+          Inventario por área
+          <Ayuda texto="Todos los equipos agrupados por su área o gerencia, igual que en el Tablero. Toca un área para desplegarla. En cada equipo puedes EDITAR su ficha técnica, registrar una FALLA o un PREVENTIVO (te lleva a Registrar con el equipo ya seleccionado y su checklist listo) y ver su HISTORIAL de atenciones. Así el control de cada equipo queda en un solo lugar." />
+        </h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
+          <input
+            style={{ ...inputStyle, flex: 1, minWidth: 220 }}
+            placeholder="Buscar por área, código, ubicación, serial, marca…"
+            value={busqueda}
+            onChange={(e) => setBusqueda(e.target.value)}
+          />
+          <button style={btnGhost(T.inkSoft)} onClick={() => setAbiertas(todasAbiertas)}>Desplegar todo</button>
+          <button style={btnGhost(T.inkSoft)} onClick={() => setAbiertas({})}>Contraer todo</button>
+        </div>
+        <p style={{ fontFamily: mono, fontSize: 12, color: T.inkSoft, margin: "8px 0 0" }}>
+          {totalVisibles} equipo{totalVisibles === 1 ? "" : "s"} en {visibles.length} área{visibles.length === 1 ? "" : "s"}{q ? ` que coinciden con “${busqueda}”` : ""}
+        </p>
+      </section>
+
+      {!equipos.length && <p style={{ color: T.inkSoft }}>Aún no hay equipos. Registra el primero arriba o carga el inventario desde el Tablero.</p>}
+      {equipos.length > 0 && !visibles.length && <p style={{ color: T.inkSoft }}>Ninguna área ni equipo coincide con “{busqueda}”.</p>}
+
+      {visibles.map((g) => {
+        const lista = enArea(g);
+        const nRojo = grupos[g].filter((e) => estadoEquipo(e).nivel === "danger").length;
+        const nAmar = grupos[g].filter((e) => estadoEquipo(e).nivel === "warn").length;
+        const abierta = q ? true : !!abiertas[g];
         return (
-          <div key={e.id} style={{ display: "flex", background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, overflow: "hidden" }}>
-            <Franja color={s.color} />
-            <div style={{ padding: 14, flex: 1 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
-                <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <strong style={{ fontFamily: display, fontSize: 20, textTransform: "uppercase" }}>{e.nombre}</strong>
-                  <CritBadge c={e.criticidad} />
-                </span>
-                <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 600, color: s.color }}>{s.etiqueta}</span>
+          <div key={g} style={{ border: `1.5px solid ${T.line}`, borderRadius: 8, background: T.panel, overflow: "hidden" }}>
+            <button
+              onClick={() => setAbiertas({ ...abiertas, [g]: !abiertas[g] })}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: nRojo > 0 ? "rgba(193,39,45,0.05)" : nAmar > 0 ? "rgba(217,164,4,0.06)" : T.panel, border: "none", cursor: "pointer", textAlign: "left", fontFamily: body }}
+            >
+              <span style={{ fontFamily: mono, fontSize: 15, color: T.steel, width: 16, flexShrink: 0 }}>{abierta ? "▼" : "▶"}</span>
+              <strong style={{ fontFamily: display, fontSize: 19, textTransform: "uppercase", color: T.ink, flex: 1 }}>{g}</strong>
+              <span style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <span style={{ fontFamily: mono, fontSize: 12, color: T.inkSoft }}>{grupos[g].length} equipo{grupos[g].length === 1 ? "" : "s"}</span>
+                {nRojo > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#fff", background: T.danger, borderRadius: 10, padding: "1px 8px" }}>{nRojo} urgente{nRojo === 1 ? "" : "s"}</span>}
+                {nAmar > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: T.ink, background: T.warn, borderRadius: 10, padding: "1px 8px" }}>{nAmar} próximo{nAmar === 1 ? "" : "s"}</span>}
+                {nRojo + nAmar === 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: T.ok }}>al día</span>}
+              </span>
+            </button>
+
+            {abierta && (
+              <div style={{ padding: "4px 12px 12px", display: "flex", flexDirection: "column", gap: 10, borderTop: `1px solid ${T.line}` }}>
+                {lista.map((e) => {
+                  const s = estadoEquipo(e);
+                  const ind = indicadoresEquipo(e, atenciones, lecturas);
+                  const ed = edad(e.anio);
+                  const hist = atenciones.filter((a) => a.equipoId === e.id).slice().sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+                  const nPrev = hist.filter((a) => a.tipo === "preventiva").length;
+                  const nFallas = hist.length - nPrev;
+                  const verHist = !!histAbierto[e.id];
+                  return (
+                    <div key={e.id} style={{ display: "flex", background: "#FAFBFC", border: `1.5px solid ${T.line}`, borderRadius: 8, overflow: "hidden", marginTop: 8 }}>
+                      <Franja color={s.color} />
+                      <div style={{ padding: 14, flex: 1 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6 }}>
+                          <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                            <strong style={{ fontFamily: display, fontSize: 20, textTransform: "uppercase" }}>{e.nombre}</strong>
+                            <CritBadge c={e.criticidad} />
+                          </span>
+                          <span style={{ fontFamily: mono, fontSize: 13, fontWeight: 600, color: s.color }}>{s.etiqueta}</span>
+                        </div>
+                        <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, margin: "4px 0 2px" }}>
+                          {e.tipo}{e.marcaModelo ? ` · ${e.marcaModelo}` : ""}{e.capacidad ? ` · ${e.capacidad}` : ""} · {e.ubicacion}
+                        </div>
+                        <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft }}>
+                          Gas: {e.refrigerante}{e.serial ? ` · S/N ${e.serial}` : ""}{ed != null ? ` · ${ed} años de servicio` : ""}
+                        </div>
+
+                        <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 8, fontFamily: mono, fontSize: 13 }}>
+                          <Dato etiqueta="Último prev." valor={fmtF(e.ultimoPrev)} />
+                          <Dato etiqueta="Próx. prev." valor={`${Math.max(0, e.intervaloDias - s.dias)} d`} color={s.color} />
+                          <Dato etiqueta="Preventivos" valor={`${nPrev}`} color={nPrev > 0 ? T.ok : T.inkSoft} />
+                          <Dato etiqueta="Fallas" valor={`${nFallas}`} color={nFallas > 2 ? T.danger : nFallas > 0 ? T.warn : T.inkSoft} />
+                          <Dato etiqueta="Disp. 90d" valor={pct(ind.disp90)} color={colorDisp(ind.disp90)} />
+                        </div>
+
+                        <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <button style={btnGhost(T.steel)} onClick={() => abrirEdicion(e)}>Editar</button>
+                          <button style={btnGhost(T.danger)} onClick={() => onRegistrar(e.id, "correctiva")}>+ Falla</button>
+                          <button style={btnGhost(T.ok)} onClick={() => onRegistrar(e.id, "preventiva")}>+ Preventivo</button>
+                          <button style={btnGhost(T.inkSoft)} onClick={() => setHistAbierto({ ...histAbierto, [e.id]: !verHist })}>
+                            {verHist ? "Ocultar historial" : `Historial (${hist.length})`}
+                          </button>
+                          <button style={btnGhost(T.inkSoft)} onClick={() => onEliminar(e.id)}>Eliminar</button>
+                        </div>
+
+                        {verHist && (
+                          <div style={{ marginTop: 10, borderTop: `1px solid ${T.line}`, paddingTop: 8 }}>
+                            {!hist.length ? (
+                              <p style={{ fontSize: 13, color: T.inkSoft, margin: 0 }}>Sin atenciones registradas todavía. Usa <strong>+ Falla</strong> o <strong>+ Preventivo</strong> para empezar su historial.</p>
+                            ) : (
+                              hist.slice(0, 10).map((a) => {
+                                const nT = (a.tareas || []).length;
+                                return (
+                                  <div key={a.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${T.line}`, fontSize: 13 }}>
+                                    <span style={{ fontFamily: mono, color: T.inkSoft, width: 82, flexShrink: 0 }}>{fmtF(a.fecha)}</span>
+                                    <span style={{ fontFamily: mono, fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 10, color: "#fff", background: a.tipo === "preventiva" ? T.ok : T.danger, flexShrink: 0 }}>
+                                      {a.tipo === "preventiva" ? "PREVENTIVO" : "FALLA"}
+                                    </span>
+                                    <span style={{ flex: 1 }}>
+                                      {a.tipo === "preventiva"
+                                        ? `${nT} tarea${nT === 1 ? "" : "s"} del checklist`
+                                        : (a.causa || "Falla") + (a.horasFuera ? ` · ${a.horasFuera} h fuera de servicio` : "")}
+                                      {a.kgGas > 0 ? ` · ${a.kgGas} kg de gas` : ""}{a.tecnico ? ` · ${a.tecnico}` : ""}
+                                      {a.nota && <div style={{ color: T.inkSoft }}>{a.nota}</div>}
+                                    </span>
+                                  </div>
+                                );
+                              })
+                            )}
+                            {hist.length > 10 && <p style={{ fontSize: 12, color: T.inkSoft, margin: "6px 0 0" }}>Mostrando las 10 más recientes de {hist.length}.</p>}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, margin: "4px 0 2px" }}>
-                {e.tipo}{e.marcaModelo ? ` · ${e.marcaModelo}` : ""}{e.capacidad ? ` · ${e.capacidad}` : ""} · {gerenciaDe(e)} · {e.ubicacion}
-              </div>
-              <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft }}>
-                Gas: {e.refrigerante}{e.serial ? ` · S/N ${e.serial}` : ""}{ed != null ? ` · ${ed} años de servicio` : ""} · último preventivo {e.ultimoPrev} · próximo en {Math.max(0, e.intervaloDias - s.dias)} días · {ind.totalFallas} falla{ind.totalFallas === 1 ? "" : "s"}
-              </div>
-              <div style={{ marginTop: 8 }}>
-                <button style={btnGhost(T.inkSoft)} onClick={() => onEliminar(e.id)}>Eliminar</button>
-              </div>
-            </div>
+            )}
           </div>
         );
       })}
+
+      {editando && (
+        <div onClick={() => setEditando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={(ev) => ev.stopPropagation()} style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderTop: `5px solid ${T.orange}`, borderRadius: 10, padding: 18, maxWidth: 840, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+            <h2 style={h2Style}>Editar ficha técnica · {fe.nombre || "equipo"}</h2>
+            <FichaCampos f={fe} set={setE} gerenciasExistentes={gerenciasExistentes} idLista="lista-gerencias-edit" />
+            <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+              <button style={{ ...btn(T.orange), opacity: valida(fe) ? 1 : 0.5 }} disabled={!valida(fe)} onClick={guardarEdicion}>Guardar cambios</button>
+              <button style={btnGhost(T.inkSoft)} onClick={() => setEditando(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ============================================================ REGISTRAR (atenciones + lecturas) */
-function Registrar({ equipos, onAtencion, onLectura }) {
+function Registrar({ equipos, onAtencion, onLectura, preseleccion }) {
   const [modo, setModo] = useState("correctiva");
   const [f, setF] = useState({ equipoId: "", fecha: hoy(), causa: "", horasFuera: "", kgGas: "", tecnico: "", nota: "", valor: "" });
   const [checks, setChecks] = useState({});
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  /* llegada desde la tarjeta de un equipo: lo deja seleccionado y en el modo pedido */
+  useEffect(() => {
+    if (!preseleccion) return;
+    if (preseleccion.modo) setModo(preseleccion.modo);
+    setF((p) => ({ ...p, equipoId: preseleccion.equipoId || "" }));
+    setChecks({});
+  }, [preseleccion]);
 
   const eq = equipos.find((x) => x.id === f.equipoId);
   const tareas = eq ? (CHECKLISTS[eq.tipo] || CHECKLISTS["Otro"]) : [];
