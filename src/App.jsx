@@ -437,6 +437,15 @@ export default function TPMFMO() {
     } else notificar("Falla registrada");
     persistir(ops);
   };
+  const eliminarAtencion = (id) => {
+    const a = atenciones.find((x) => x.id === id);
+    const tipoTxt = a && a.tipo === "preventiva" ? "preventivo" : "falla";
+    pedirConfirmacion(`¿Eliminar este registro de ${tipoTxt}? Se quitará del historial y del análisis (Pareto, horas fuera, disponibilidad).`, () => {
+      setAtenciones((as) => as.filter((x) => x.id !== id));
+      persistir([{ tabla: "atenciones", op: "delete", id }]);
+      notificar("Registro eliminado del historial");
+    });
+  };
   const registrarLectura = (l) => {
     const nueva = { id: uid(), ...l };
     setLecturas((ls) => [nueva, ...ls]);
@@ -526,14 +535,14 @@ export default function TPMFMO() {
     const nuevo = { id: uid(), ...a };
     setAires((xs) => [nuevo, ...xs]);
     persistir([{ tabla: "aires_montados", op: "upsert", datos: aAireDB(nuevo, usuario.id) }]);
-    notificar("Aire montado registrado");
+    notificar("Equipo instalado registrado");
   };
   const eliminarAire = (id) => {
     const a = aires.find((x) => x.id === id);
-    pedirConfirmacion(`¿Eliminar el aire montado en "${a ? a.lugar : ""}"?`, () => {
+    pedirConfirmacion(`¿Eliminar el equipo instalado en "${a ? a.lugar : ""}"?`, () => {
       setAires((xs) => xs.filter((x) => x.id !== id));
       persistir([{ tabla: "aires_montados", op: "delete", id }]);
-      notificar("Aire montado eliminado");
+      notificar("Equipo instalado eliminado");
     });
   };
   const aireAlPlan = (a) => {
@@ -568,7 +577,7 @@ export default function TPMFMO() {
   );
   const nAlertas = alertasPrev.length + alertasTemp.length;
 
-  const tabs = [["tablero", "Tablero"], ["equipos", "Equipos"], ["atencion", "Registrar"], ["jornadas", "Jornadas"], ["aires", "Aires montados"], ["analisis", "Análisis"], ["guia", "Guía"]];
+  const tabs = [["tablero", "Tablero"], ["equipos", "Equipos"], ["atencion", "Registrar"], ["jornadas", "Jornadas"], ["aires", "Equipos instalados"], ["analisis", "Análisis"], ["guia", "Guía"]];
 
   if (!supabase) return <PantallaMensaje titulo="Falta configurar" texto="Abre src/App.jsx y pega el Project URL y la anon key del proyecto de Supabase en las dos líneas marcadas al inicio del archivo." />;
   if (!autListo) return <PantallaMensaje titulo="TPM FMO" texto="Iniciando…" />;
@@ -609,8 +618,10 @@ export default function TPMFMO() {
             </div>
           </div>
           <p style={{ margin: "10px 0 14px", fontSize: 13, color: "#B5B5B0", maxWidth: 640 }}>
-            Inventario de equipos de frío, preventivos por calendario con checklist guiado, control de temperaturas
-            y de refrigerante, y registro de fallas con indicadores de disponibilidad.
+            Sistema de gestión de mantenimiento preventivo para los equipos de refrigeración de Ferrominera.
+            Inventario por área, preventivos por calendario con checklist guiado, control de temperatura y refrigerante,
+            equipos instalados, bitácora de pendientes por equipo e indicadores de confiabilidad —MTBF, disponibilidad
+            y equipos reincidentes— a partir del historial de fallas.
           </p>
           <nav style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
             {tabs.map(([k, lbl]) => (
@@ -646,11 +657,11 @@ export default function TPMFMO() {
 
       <main style={{ maxWidth: 900, margin: "0 auto", padding: "20px 16px 60px" }}>
         {tab === "tablero" && <Tablero equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
-        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} onAgregarObs={agregarObservacion} onResolverObs={resolverObservacion} onEliminarObs={eliminarObservacion} />}
+        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} onAgregarObs={agregarObservacion} onResolverObs={resolverObservacion} onEliminarObs={eliminarObservacion} onEliminarAtencion={eliminarAtencion} />}
         {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} onObservacion={agregarObservacion} />}
         {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} />}
         {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} />}
-        {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />}
+        {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} onEliminar={eliminarAtencion} />}
         {tab === "guia" && <Guia onVaciar={vaciarTodo} onReal={cargarReal} />}
       </main>
     </div>
@@ -1011,7 +1022,7 @@ function FichaCampos({ f, set, gerenciasExistentes, idLista }) {
   );
 }
 
-function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar, onEliminar, onEditar, onRegistrar, onAgregarObs, onResolverObs, onEliminarObs }) {
+function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar, onEliminar, onEditar, onRegistrar, onAgregarObs, onResolverObs, onEliminarObs, onEliminarAtencion }) {
   const vacio = { nombre: "", tipo: TIPOS_EQUIPO[0], gerencia: "", ubicacion: "", marcaModelo: "", serial: "", refrigerante: REFRIGERANTES[0], anio: "", capacidad: "", criticidad: "B", intervaloDias: "90", ultimoPrev: hoy(), tempMin: "", tempMax: "" };
   const [f, setF] = useState(vacio);
   const [busqueda, setBusqueda] = useState("");
@@ -1238,6 +1249,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar,
                                       {a.kgGas > 0 ? ` · ${a.kgGas} kg de gas` : ""}{a.tecnico ? ` · ${a.tecnico}` : ""}
                                       {a.nota && <div style={{ color: T.inkSoft }}>{a.nota}</div>}
                                     </span>
+                                    {onEliminarAtencion && <button title="Eliminar registro" onClick={() => onEliminarAtencion(a.id)} style={{ ...btnGhost(T.danger), padding: "2px 9px", flexShrink: 0 }}>×</button>}
                                   </div>
                                 );
                               })
@@ -1620,12 +1632,12 @@ function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
       {/* resumen */}
       <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
         <h2 style={h2Style}>
-          Aires montados
-          <Ayuda texto="Registro de los equipos de aire acondicionado instalados (montados) por la sección, con su código VISCO, marca, capacidad, fecha y lugar de instalación. Es un inventario aparte del plan de mantenimiento preventivo: cuando un aire montado deba entrar al plan, usa el botón «Al plan de mantenimiento» de su tarjeta y se crea su ficha en Equipos." />
+          Equipos instalados
+          <Ayuda texto="Registro de los equipos de aire acondicionado instalados por la sección, con su código VISCO, marca, capacidad, fecha y lugar de instalación. Es un inventario aparte del plan de mantenimiento preventivo: cuando un equipo instalado deba entrar al plan, usa el botón «Al plan de mantenimiento» de su tarjeta y se crea su ficha en Equipos." />
         </h2>
         <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginTop: 6 }}>
-          <Dato etiqueta="Total montados" valor={todos.length} />
-          <Dato etiqueta={`Montados en ${anio}`} valor={esteAnio} color={T.frio} />
+          <Dato etiqueta="Total instalados" valor={todos.length} />
+          <Dato etiqueta={`Instalados en ${anio}`} valor={esteAnio} color={T.frio} />
           <Dato etiqueta="Con código VISCO" valor={todos.filter((a) => a.codigoVisco).length} />
         </div>
         {(porTipo.length > 0 || porMarca.length > 0) && (
@@ -1638,7 +1650,7 @@ function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
 
       {/* registrar nuevo */}
       <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
-        <h2 style={h2Style}>Registrar aire montado</h2>
+        <h2 style={h2Style}>Registrar equipo instalado</h2>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
           <Field label="Lugar de instalación" ancho={240}>
             <input style={inputStyle} value={f.lugar} onChange={set("lugar")} placeholder="HOSPITAL – BANCO DE SANGRE" />
@@ -1654,7 +1666,7 @@ function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
           <Field label="Capacidad">
             <input style={inputStyle} value={f.capacidad} onChange={set("capacidad")} placeholder="24000 BTU / 5 TR" />
           </Field>
-          <Field label="Fecha de montaje">
+          <Field label="Fecha de instalación">
             <input style={inputStyle} type="date" value={f.fechaMontaje} onChange={set("fechaMontaje")} />
           </Field>
           <Field label="Código VISCO" ayuda="Código de inventario que la empresa asigna al condensador, por ejemplo VISCO-000018.">
@@ -1668,20 +1680,20 @@ function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
           </Field>
         </div>
         <button style={{ ...btn(T.orange), marginTop: 16, opacity: listo ? 1 : 0.5 }} disabled={!listo} onClick={guardar}>
-          Guardar aire montado
+          Guardar equipo instalado
         </button>
       </section>
 
       {/* listado */}
       <section>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-          <h2 style={h2Style}>Inventario de aires montados ({lista.length})</h2>
+          <h2 style={h2Style}>Inventario de equipos instalados ({lista.length})</h2>
           <input style={{ ...inputStyle, width: 260 }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por lugar, VISCO, marca…" />
         </div>
         {!todos.length ? (
-          <p style={{ color: T.inkSoft }}>Aún no hay aires montados registrados. Carga el inventario VISCO (SQL) o registra el primero arriba.</p>
+          <p style={{ color: T.inkSoft }}>Aún no hay equipos instalados registrados. Carga el inventario VISCO (SQL) o registra el primero arriba.</p>
         ) : !lista.length ? (
-          <p style={{ color: T.inkSoft }}>Ningún aire coincide con la búsqueda.</p>
+          <p style={{ color: T.inkSoft }}>Ningún equipo coincide con la búsqueda.</p>
         ) : (
           lista.map((a) => (
             <div key={a.id} style={{ display: "flex", background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, marginBottom: 10, overflow: "hidden" }}>
@@ -1692,7 +1704,7 @@ function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
                   <span style={{ fontFamily: mono, fontSize: 13, color: T.frio, fontWeight: 700 }}>{a.codigoVisco || "sin código VISCO"}</span>
                 </div>
                 <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, marginTop: 2 }}>
-                  {[a.tipo, a.capacidad, a.marca].filter(Boolean).join(" · ")} · Montado el {fmtFecha(a.fechaMontaje)}
+                  {[a.tipo, a.capacidad, a.marca].filter(Boolean).join(" · ")} · Instalado el {fmtFecha(a.fechaMontaje)}
                 </div>
                 {a.serial && a.serial !== a.codigoVisco && (
                   <div style={{ fontFamily: mono, fontSize: 11.5, color: T.inkSoft, marginTop: 4, wordBreak: "break-all" }}>S/N {a.serial}</div>
@@ -1869,7 +1881,7 @@ function EstadoMantenimiento({ equipos, atenciones, lecturas, jornadas }) {
 }
 
 /* ============================================================ ANÁLISIS */
-function Analisis({ equipos, atenciones, lecturas, jornadas }) {
+function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
   const nombre = (id) => equipos.find((e) => e.id === id)?.nombre || "—";
   const equipoDe = (id) => equipos.find((e) => e.id === id);
 
@@ -1943,6 +1955,38 @@ function Analisis({ equipos, atenciones, lecturas, jornadas }) {
     return Object.entries(acc).sort((a, b) => b[1] - a[1]);
   }, [consumoGas, equipos]);
   const sospechososFuga = consumoGas.filter((c) => c.recargas >= 2);
+
+  /* ---- confiabilidad (MTBF, MTTR, disponibilidad, tasa de fallas) · operación 24 h/día ---- */
+  const confia = useMemo(() => {
+    let dias;
+    if (periodo === "todo") {
+      const fs = atenciones.map((a) => a.fecha).filter(Boolean).sort();
+      dias = fs.length ? Math.max(1, Math.ceil((Date.now() - new Date(fs[0]).getTime()) / 86400000)) : 90;
+    } else if (periodo === "anio") {
+      dias = Math.max(1, Math.ceil((Date.now() - new Date(new Date().getFullYear() + "-01-01").getTime()) / 86400000));
+    } else dias = +periodo;
+    const horasPeriodo = dias * 24;                 // horas por equipo en el período (24 h/día)
+    const N = fallas.length;
+    const nEq = equipos.length || 1;
+    const mttr = N > 0 ? horasFueraTotal / N : null;                 // h por reparación
+    const opParque = Math.max(1, nEq * horasPeriodo - horasFueraTotal);
+    const mtbf = N > 0 ? opParque / N : null;                        // h de operación por falla
+    const disp = mtbf != null ? mtbf / (mtbf + mttr) : null;
+    const lambda = mtbf ? 1 / mtbf : null;                           // fallas por hora
+    const R30 = lambda != null ? Math.exp(-lambda * 720) : null;     // opera 30 días sin fallar
+    const fallasEqAnio = N / nEq / (dias / 365);                     // fallas por equipo al año
+    const acc = {};
+    fallas.forEach((a) => { if (!acc[a.equipoId]) acc[a.equipoId] = { n: 0, horas: 0 }; acc[a.equipoId].n += 1; acc[a.equipoId].horas += +a.horasFuera || 0; });
+    let ac = 0;
+    const porEquipo = Object.entries(acc).map(([id, v]) => {
+      const opEq = Math.max(1, horasPeriodo - v.horas);
+      return { id, n: v.n, horas: v.horas, mtbfEq: opEq / v.n, mttrEq: v.horas / v.n, dispEq: (opEq / v.n) / (opEq / v.n + v.horas / v.n) };
+    }).sort((a, b) => b.n - a.n || b.horas - a.horas);
+    porEquipo.forEach((e) => { ac += e.n; e.pctAcum = N ? ac / N : 0; });
+    let corte = 0; for (let i = 0; i < porEquipo.length; i++) { corte = i + 1; if (porEquipo[i].pctAcum >= 0.8) break; }
+    return { dias, N, nEq, mttr, mtbf, disp, lambda, R30, fallasEqAnio, porEquipo, corte };
+  }, [atFiltradas, equipos, periodo]);
+  const dDias = (h) => (Number.isFinite(h) ? fmt(h / 24, 0) + " d" : "—");
 
   if (!equipos.length)
     return (
@@ -2080,6 +2124,63 @@ function Analisis({ equipos, atenciones, lecturas, jornadas }) {
         )}
       </section>
 
+      {/* ------- confiabilidad ------- */}
+      <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
+        <h2 style={h2Style}>
+          Confiabilidad del parque
+          <Ayuda texto={"Indicadores de ingeniería de confiabilidad calculados de tu historial, con operación de 24 h/día (los equipos trabajan los tres turnos). MTBF = tiempo de operación ÷ número de fallas (cuánto aguanta antes de fallar). MTTR = horas fuera de servicio ÷ número de fallas (cuánto tardas en repararlo). Disponibilidad = MTBF ÷ (MTBF + MTTR). Tasa de fallas λ = 1 ÷ MTBF, y con ella R(t) = e^(−λ·t) es la probabilidad de operar un tiempo t sin fallar. Todo respeta el período seleccionado arriba."} />
+        </h2>
+        {confia.N === 0 ? (
+          <p style={{ color: T.inkSoft, margin: "6px 0 0" }}>Sin fallas registradas en el período — no hay datos para MTBF/MTTR todavía. A medida que se registren fallas, estos indicadores se llenan solos.</p>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginTop: 6 }}>
+              <Dato etiqueta="MTBF · parque" valor={dDias(confia.mtbf)} color={T.steel} />
+              <Dato etiqueta="MTTR · reparación" valor={`${fmt(confia.mttr, 1)} h`} color={T.steel} />
+              <Dato etiqueta="Disponibilidad" valor={pct(confia.disp)} color={colorDisp(confia.disp)} />
+              <Dato etiqueta="Confiab. a 30 días" valor={pct(confia.R30)} color={colorDisp(confia.R30)} />
+              <Dato etiqueta="Fallas · equipo/año" valor={fmt(confia.fallasEqAnio, 2)} color={confia.fallasEqAnio > 1 ? T.warn : T.ok} />
+            </div>
+            <p style={{ fontSize: 12.5, color: T.inkSoft, margin: "10px 0 0", lineHeight: 1.6 }}>
+              En {confia.dias} días, {confia.N} falla{confia.N === 1 ? "" : "s"} en {confia.nEq} equipos: en promedio cada equipo opera <strong>{dDias(confia.mtbf)}</strong> entre fallas y toma <strong>{fmt(confia.mttr, 1)} h</strong> repararlo, para una disponibilidad del parque de <strong>{pct(confia.disp)}</strong>. λ = {confia.lambda ? fmt(confia.lambda * 1000, 3) : "—"} fallas por cada 1.000 h de operación.
+            </p>
+
+            {confia.porEquipo.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <h3 style={{ fontFamily: display, fontSize: 16, textTransform: "uppercase", margin: "0 0 8px" }}>Equipos reincidentes (Pareto por equipo)</h3>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: T.bg, textAlign: "left", fontFamily: mono, fontSize: 12 }}>
+                        <th style={td}>#</th><th style={td}>Equipo</th><th style={td}>Fallas</th><th style={td}>Horas fuera</th><th style={td}>MTBF</th><th style={td}>MTTR</th><th style={td}>Disp.</th><th style={td}>% acum.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {confia.porEquipo.slice(0, 10).map((e, i) => {
+                        const vital = i < confia.corte;
+                        return (
+                          <tr key={e.id} style={{ borderBottom: `1px solid ${T.line}`, background: vital ? "rgba(193,39,45,0.04)" : "transparent" }}>
+                            <td style={td}>{i + 1}</td>
+                            <td style={{ ...td, fontFamily: display, textTransform: "uppercase", fontWeight: 600 }}>{nombre(e.id)}{vital && <span style={{ color: T.danger }}> ★</span>}</td>
+                            <td style={{ ...td, fontWeight: 700, color: e.n > 2 ? T.danger : e.n > 1 ? T.warn : T.ink }}>{e.n}</td>
+                            <td style={td}>{fmt(e.horas, 1)} h</td>
+                            <td style={td}>{dDias(e.mtbfEq)}</td>
+                            <td style={td}>{fmt(e.mttrEq, 1)} h</td>
+                            <td style={{ ...td, color: colorDisp(e.dispEq), fontWeight: 600 }}>{pct(e.dispEq)}</td>
+                            <td style={{ ...td, fontFamily: mono, color: vital ? T.danger : T.inkSoft }}>{pct(e.pctAcum)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p style={{ fontSize: 12, color: T.inkSoft, margin: "8px 0 0" }}>★ = equipos vitales: los primeros {confia.corte} concentran el ~80 % de las fallas del período. Son los candidatos a intervención de fondo o reemplazo — priorizarlos da la mayor mejora con el menor esfuerzo.</p>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
       {/* ------- consumo de refrigerante ------- */}
       {consumoGas.length > 0 && (
         <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
@@ -2156,6 +2257,7 @@ function Analisis({ equipos, atenciones, lecturas, jornadas }) {
               )}
               {a.nota && <div style={{ color: T.inkSoft }}>{a.nota}</div>}
             </div>
+            {onEliminar && <button title="Eliminar registro" onClick={() => onEliminar(a.id)} style={{ ...btnGhost(T.danger), alignSelf: "center", marginRight: 10, flexShrink: 0 }}>Eliminar</button>}
           </div>
         ))}
       </section>
