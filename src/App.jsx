@@ -620,8 +620,8 @@ export default function TPMFMO() {
           <p style={{ margin: "10px 0 14px", fontSize: 13, color: "#B5B5B0", maxWidth: 640 }}>
             Sistema de gestión de mantenimiento preventivo para los equipos de refrigeración de Ferrominera.
             Inventario por área, preventivos por calendario con checklist guiado, control de temperatura y refrigerante,
-            equipos instalados, bitácora de pendientes por equipo e indicadores de confiabilidad —MTBF, disponibilidad
-            y equipos reincidentes— a partir del historial de fallas.
+            equipos instalados, bitácora de pendientes por equipo e indicadores de confiabilidad como MTBF, disponibilidad
+            y equipos reincidentes, a partir del historial de fallas.
           </p>
           <nav style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
             {tabs.map(([k, lbl]) => (
@@ -2454,7 +2454,7 @@ function Guia({ onVaciar, onReal }) {
         <Paso n="1" titulo="Cada día" texto="Registrar las atenciones ejecutadas (con su técnico) el mismo día. Revisar el tablero: amarillos se planifican, rojos se ejecutan, temperaturas fuera de rango se inspeccionan." />
         <Paso n="2" titulo="En cada ronda" texto="Tomar lecturas de temperatura de los equipos críticos (cavas, precisión) y registrarlas — toma segundos y es la alerta más temprana que existe." />
         <Paso n="3" titulo="Cada semana" texto="Revisar ANÁLISIS: la causa dominante del Pareto y el mayor consumidor de gas definen las acciones de mejora de la semana." />
-        <Paso n="4" titulo="Cada mes" texto="Presentar a la supervisión el resumen del área y los indicadores de confiabilidad (disponibilidad, MTBF, MTTR y equipos reincidentes) — salen listos del sistema y justifican las decisiones de reemplazo o intervención." />
+        <Paso n="4" titulo="Cada mes" texto="Presentar a la supervisión el resumen del área y los indicadores de confiabilidad (disponibilidad, MTBF, MTTR y equipos reincidentes), que salen listos del sistema y justifican las decisiones de reemplazo o intervención." />
       </S>
 
       <section style={{ background: T.panel, border: `1.5px dashed ${T.line}`, borderRadius: 8, padding: 16 }}>
