@@ -2353,6 +2353,58 @@ function Guia({ onVaciar, onReal }) {
         </Tarjeta>
       </S>
 
+      <S titulo="Trabajar desde la ficha del equipo">
+        <p style={{ margin: "6px 0" }}>
+          En <strong>EQUIPOS</strong>, al abrir un equipo tienes todo a la mano sin ir a buscarlo en listas:
+        </p>
+        <Tarjeta color={T.steel} titulo="Editar">
+          Abre la ficha técnica completa del equipo para corregir cualquier dato (área, ubicación, criticidad,
+          frecuencia, temperaturas, serial…) y guardar. Útil cuando cambia un dato o se corrige un error de carga.
+        </Tarjeta>
+        <Tarjeta color={T.danger} titulo="+ Falla  ·  + Preventivo">
+          Atajos que te llevan a REGISTRAR con ese equipo <strong>ya seleccionado</strong> y, en preventivo, con su
+          checklist listo. Así registras el trabajo desde el propio equipo, sin buscarlo.
+        </Tarjeta>
+        <Tarjeta color={T.inkSoft} titulo="Historial">
+          Muestra todas las atenciones del equipo (fallas y preventivos) con su fecha y detalle. Es la memoria del
+          equipo: permite ver si es reincidente.
+        </Tarjeta>
+        <p style={{ margin: "10px 0 4px", fontWeight: 600 }}>Eliminar no es lo mismo que resolver</p>
+        <p style={{ margin: "4px 0" }}>
+          <strong>Eliminar (×)</strong> borra un registro que <em>no debió existir</em> (una prueba, un error de
+          tipeo): desaparece del historial y del análisis. <strong>Resolver</strong> es para lo que <em>sí pasó</em>
+          y ya se atendió: la falla se queda en el historial como parte de las estadísticas, porque ocurrió de verdad
+          y sirve para decidir. Regla simple: se borra un error, no se borra la historia.
+        </p>
+      </S>
+
+      <S titulo="Pendientes por equipo (bitácora)">
+        <p style={{ margin: "6px 0" }}>
+          Cada equipo tiene una <strong>bitácora de pendientes</strong>. Cuando el técnico revisa un equipo y detecta
+          algo por hacer —limpiar el condensador, pedir un repuesto, revisar una fuga— lo anota ahí, con la fecha y
+          quién lo detectó. Queda marcado como <Chip color={T.warn} texto="PENDIENTE" oscuro /> hasta que alguien lo
+          resuelve. También puedes anotar un pendiente al registrar un preventivo o una falla.
+        </p>
+        <p style={{ margin: "6px 0" }}>
+          El <strong>tablero avisa</strong> cuántos pendientes hay por área y por equipo, para que nada se olvide.
+          Los pendientes son tareas, no fallas: no entran en el Pareto ni en la disponibilidad. Cuando se hace la
+          tarea, se marca como resuelta y se apaga.
+        </p>
+      </S>
+
+      <S titulo="Equipos instalados">
+        <p style={{ margin: "6px 0" }}>
+          Es el registro de los equipos que la sección ha <strong>instalado</strong> (montado), con su código
+          <strong> VISCO</strong>, marca, capacidad, fecha y lugar de instalación. Es un inventario <em>aparte</em>
+          del plan de mantenimiento preventivo: sirve para llevar la trazabilidad de qué se instaló y cuándo.
+        </p>
+        <p style={{ margin: "6px 0" }}>
+          Cuando un equipo instalado deba entrar al plan de preventivos, usa el botón
+          <strong> «Al plan de mantenimiento»</strong> de su tarjeta: el sistema le crea su ficha en EQUIPOS y a
+          partir de ahí entra en el semáforo y los indicadores como cualquier otro.
+        </p>
+      </S>
+
       <S titulo="El semáforo de preventivos">
         <p style={{ margin: "6px 0" }}>
           Cada equipo tiene una <strong>frecuencia de preventivo en días calendario</strong> (ej.: cada 90 días).
@@ -2391,13 +2443,18 @@ function Guia({ onVaciar, onReal }) {
         <Def termino="Diagrama de Pareto">Ordena las causas de falla por las horas que costaron y marca las “pocas vitales” que concentran ~80 % del tiempo perdido. Atacarlas primero produce la mayor mejora con el menor esfuerzo.</Def>
         <Def termino="Consumo de refrigerante">Kilos de gas cargados por equipo. Un equipo sellado no consume gas: cada recarga delata una fuga, y las recargas repetidas (⚠ fuga crónica) justifican una reparación de fondo — el gasto acumulado en gas suele superar el costo de repararla.</Def>
         <Def termino="Criticidad A / B / C">Clasificación del impacto de la falla del equipo: A = operaciones o áreas sensibles, B = confort de áreas de trabajo, C = respaldo disponible o impacto menor.</Def>
+        <Def termino="MTBF — tiempo medio entre fallas">Horas de operación que aguanta un equipo, en promedio, antes de volver a fallar (tiempo de operación ÷ número de fallas). Mientras más alto, más confiable. Se calcula con operación de 24 h/día.</Def>
+        <Def termino="MTTR — tiempo medio de reparación">Horas que toma en promedio devolver un equipo al servicio tras una falla (horas fuera ÷ número de fallas). Mientras más bajo, mejor respuesta del área.</Def>
+        <Def termino="Disponibilidad = MTBF ÷ (MTBF + MTTR)">Fracción del tiempo que el equipo estuvo realmente disponible. Une lo que aguanta sin fallar con lo que tarda en repararse; es el indicador que resume la salud del parque.</Def>
+        <Def termino="Confiabilidad R(t)">Probabilidad de que un equipo opere un tiempo dado sin fallar, R(t) = e^(−λ·t), donde λ = 1 ÷ MTBF es la tasa de fallas. Responde “¿qué chance hay de llegar sin fallar a la próxima parada?”.</Def>
+        <Def termino="Equipos reincidentes (Pareto por equipo)">Ranking de los equipos que más fallan y más horas fuera acumulan. Los pocos que concentran ~80 % de las fallas son los candidatos a intervención de fondo o reemplazo: priorizarlos da la mayor mejora.</Def>
       </S>
 
       <S titulo="Rutina recomendada del área">
         <Paso n="1" titulo="Cada día" texto="Registrar las atenciones ejecutadas (con su técnico) el mismo día. Revisar el tablero: amarillos se planifican, rojos se ejecutan, temperaturas fuera de rango se inspeccionan." />
         <Paso n="2" titulo="En cada ronda" texto="Tomar lecturas de temperatura de los equipos críticos (cavas, precisión) y registrarlas — toma segundos y es la alerta más temprana que existe." />
         <Paso n="3" titulo="Cada semana" texto="Revisar ANÁLISIS: la causa dominante del Pareto y el mayor consumidor de gas definen las acciones de mejora de la semana." />
-        <Paso n="4" titulo="Cada mes" texto="Presentar el resumen del área (fallas, horas fuera, disponibilidad, gas) a la supervisión — los indicadores salen listos del sistema." />
+        <Paso n="4" titulo="Cada mes" texto="Presentar a la supervisión el resumen del área y los indicadores de confiabilidad (disponibilidad, MTBF, MTTR y equipos reincidentes) — salen listos del sistema y justifican las decisiones de reemplazo o intervención." />
       </S>
 
       <section style={{ background: T.panel, border: `1.5px dashed ${T.line}`, borderRadius: 8, padding: 16 }}>
@@ -2411,8 +2468,10 @@ function Guia({ onVaciar, onReal }) {
           <button style={btnGhost(T.danger)} onClick={onVaciar}>Vaciar todos los datos</button>
         </div>
         <p style={{ fontSize: 12, color: T.inkSoft, margin: "8px 0 0" }}>
-          "Cargar Programa 2026" reemplaza los datos actuales por los 520 equipos del programa FERRO-5479 del taller
-          (pide confirmación si hay datos). Útil para demostraciones y para iniciar la operación real.
+          "Cargar Programa 2026" <strong>reemplaza TODO</strong> por los equipos del programa FERRO-5479 del taller
+          (pide confirmación). ⚠ Una vez que ya tengas tu inventario real cargado, no lo uses: borraría los equipos
+          que hayas agregado y su historial. Para <strong>añadir</strong> equipos sin borrar nada, usa el formulario
+          "Nuevo equipo" en la pestaña EQUIPOS.
         </p>
       </section>
 
