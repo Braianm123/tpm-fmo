@@ -2081,7 +2081,15 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
       const gas = Object.entries(gAcc).sort((a, b) => areaDe(a[0]).localeCompare(areaDe(b[0])) || b[1].kg - a[1].kg).map(([id, v]) => ({ "Equipo": nombre(id), "Área": areaDe(id), "Kg totales": +v.kg.toFixed(2), "N° recargas": v.r, "¿Sospechoso de fuga?": v.r >= 2 ? "Sí" : "No" }));
 
       const wb = XLSX.utils.book_new();
-      const add = (rows, name) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ "—": "Sin datos" }]), name);
+      const add = (rows, name) => {
+        const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "—": "Sin datos" }]);
+        if (rows.length && ws["!ref"]) {
+          ws["!autofilter"] = { ref: ws["!ref"] };                 // filtro por columnas (incluida el área)
+          const cols = Object.keys(rows[0]).map((k) => ({ wch: Math.min(40, Math.max(k.length + 2, ...rows.slice(0, 60).map((r) => String(r[k] ?? "").length + 2))) }));
+          ws["!cols"] = cols;
+        }
+        XLSX.utils.book_append_sheet(wb, ws, name);
+      };
       add(resumen, "Resumen");
       add(inv, "Inventario");
       add(hist, "Fallas y preventivos");
