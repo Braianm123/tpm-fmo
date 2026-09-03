@@ -55,12 +55,12 @@ const deEquipoDB = (r) => ({
 });
 const aAtencionDB = (a, userId) => ({
   id: a.id, user_id: userId, equipo_id: a.equipoId, tipo: a.tipo, fecha: a.fecha,
-  causa: a.causa || "", horas_fuera: +a.horasFuera || 0, kg_gas: +a.kgGas || 0,
+  causa: a.causa || "", horas_fuera: +a.horasFuera || 0, kg_gas: +a.kgGas || 0, presion: +a.presion || 0,
   tecnico: a.tecnico || "", nota: a.nota || "", tareas: a.tareas || [],
 });
 const deAtencionDB = (r) => ({
   id: r.id, equipoId: r.equipo_id, tipo: r.tipo, fecha: r.fecha, causa: r.causa || "",
-  horasFuera: +r.horas_fuera || 0, kgGas: +r.kg_gas || 0, tecnico: r.tecnico || "",
+  horasFuera: +r.horas_fuera || 0, kgGas: +r.kg_gas || 0, presion: +r.presion || 0, tecnico: r.tecnico || "",
   nota: r.nota || "", tareas: Array.isArray(r.tareas) ? r.tareas : [],
 });
 const aLecturaDB = (l, userId) => ({
@@ -107,10 +107,10 @@ const CAUSAS_FALLA = ["Fuga de refrigerante", "Falla de compresor", "Falla eléc
 
 /* ---------- checklist de preventivo según tipo de equipo ---------- */
 const CHECKLISTS = {
-  "Split": ["Limpiar filtros de aire", "Limpiar serpentín evaporador", "Limpiar serpentín condensador", "Verificar carga de refrigerante y presiones", "Revisar conexiones eléctricas y contactor", "Medir amperaje del compresor", "Limpiar y verificar drenaje de condensado", "Verificar temperatura de suministro", "Revisar anclajes, ruido y vibración"],
-  "A/A ventana": ["Limpiar filtro de aire", "Limpiar serpentines evaporador y condensador", "Verificar carga de refrigerante", "Revisar conexiones eléctricas y capacitor", "Verificar termostato y selector", "Limpiar bandeja y drenaje de condensado", "Revisar sello y montaje en la ventana", "Verificar ruido y vibración"],
-  "Central / compacto": ["Limpiar filtros de aire", "Limpiar serpentines evaporador y condensador", "Verificar carga de refrigerante y presiones", "Revisar correas y poleas del ventilador", "Revisar conexiones eléctricas, contactores y relés", "Medir voltaje y amperaje de motores", "Limpiar drenaje de condensado", "Verificar temperaturas de suministro y retorno", "Revisar ruido y vibración"],
-  "Aire de precisión": ["Limpiar/reemplazar filtros", "Limpiar serpentines", "Verificar carga de refrigerante y presiones", "Verificar control de temperatura y humedad", "Probar alarmas y controles de seguridad", "Revisar conexiones eléctricas", "Verificar resistencias y humidificador", "Registrar temperaturas de operación"],
+  "Split": ["Limpiar filtros de aire", "Limpiar serpentín evaporador", "Limpiar serpentín condensador", "Verificar carga de refrigerante y presiones", "Revisar conexiones eléctricas y contactor", "Medir amperaje del compresor", "Limpiar y verificar drenaje de condensado", "Verificar temperatura de suministro", "Ajuste de termostato", "Revisar anclajes, ruido y vibración"],
+  "A/A ventana": ["Limpiar filtro de aire", "Limpiar serpentines evaporador y condensador", "Verificar carga de refrigerante", "Revisar conexiones eléctricas y capacitor", "Verificar y ajustar termostato y selector", "Limpiar bandeja y drenaje de condensado", "Revisar sello y montaje en la ventana", "Verificar ruido y vibración"],
+  "Central / compacto": ["Limpiar filtros de aire", "Limpiar serpentines evaporador y condensador", "Verificar carga de refrigerante y presiones", "Revisar correas y poleas del ventilador", "Revisar conexiones eléctricas, contactores y relés", "Medir voltaje y amperaje de motores", "Limpiar drenaje de condensado", "Verificar temperaturas de suministro y retorno", "Ajuste de termostato", "Revisar ruido y vibración"],
+  "Aire de precisión": ["Limpiar/reemplazar filtros", "Limpiar serpentines", "Verificar carga de refrigerante y presiones", "Verificar control de temperatura y humedad", "Ajuste de termostato / setpoint", "Probar alarmas y controles de seguridad", "Revisar conexiones eléctricas", "Verificar resistencias y humidificador", "Registrar temperaturas de operación"],
   "Cava / cuarto frío": ["Limpiar serpentín condensador", "Verificar escarcha y sistema de deshielo", "Revisar empacaduras y cierre de puertas", "Verificar temperatura interna vs. objetivo", "Verificar carga de refrigerante y presiones", "Revisar conexiones eléctricas y controles", "Limpiar drenaje", "Revisar ventiladores del evaporador"],
   "Chiller": ["Registrar temperaturas y presiones de operación", "Inspeccionar fugas de refrigerante", "Limpiar serpentines / intercambiadores", "Verificar nivel y calidad de aceite del compresor", "Revisar conexiones eléctricas, arrancadores y contactores", "Probar controles de operación y seguridad (presostatos, alarmas)", "Revisar bombas y caudal de agua", "Verificar ruido, vibración y alineación"],
   "Nevera / congelador": ["Limpiar serpentín condensador", "Revisar empacaduras de puertas", "Verificar temperatura interna", "Verificar sistema de deshielo", "Revisar conexiones eléctricas", "Limpiar drenaje"],
@@ -1138,6 +1138,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar,
                   const ind = indicadoresEquipo(e, atenciones, lecturas);
                   const ed = edad(e.anio);
                   const hist = atenciones.filter((a) => a.equipoId === e.id).slice().sort((a, b) => String(b.fecha || "").localeCompare(String(a.fecha || "")));
+                  const presiones = hist.filter((a) => a.presion > 0).slice().sort((a, b) => String(a.fecha || "").localeCompare(String(b.fecha || "")));
                   const pend = observaciones.filter((o) => o.equipoId === e.id && o.estado !== "resuelta");
                   const resueltas = observaciones.filter((o) => o.equipoId === e.id && o.estado === "resuelta");
                   const verObs = !!obsAbierto[e.id];
@@ -1231,6 +1232,31 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar,
 
                         {verHist && (
                           <div style={{ marginTop: 10, borderTop: `1px solid ${T.line}`, paddingTop: 8 }}>
+                            {presiones.length > 0 && (
+                              <div style={{ marginBottom: 12, padding: "8px 10px", background: "#F4F8FB", border: `1px solid ${T.line}`, borderRadius: 6 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 6 }}>
+                                  <strong style={{ fontFamily: mono, fontSize: 12, color: T.steel }}>TENDENCIA DE PRESIÓN</strong>
+                                  {presiones.length >= 2 && (() => {
+                                    const dlt = presiones[presiones.length - 1].presion - presiones[0].presion;
+                                    const txt = dlt <= -10 ? `▼ baja ${Math.abs(dlt)} psi · posible fuga` : dlt >= 10 ? `▲ sube ${dlt} psi` : "→ estable";
+                                    const col = dlt <= -10 ? T.danger : dlt >= 10 ? T.warn : T.ok;
+                                    return <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: col }}>{txt}</span>;
+                                  })()}
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 6 }}>
+                                  {(() => { const mx = Math.max(...presiones.map((p) => p.presion)) || 1; return presiones.map((p) => (
+                                    <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: mono, fontSize: 11.5 }}>
+                                      <span style={{ color: T.inkSoft, width: 70, flexShrink: 0 }}>{fmtF(p.fecha)}</span>
+                                      <span style={{ flex: 1, height: 12, background: "#E4EBF0", borderRadius: 3, overflow: "hidden" }}>
+                                        <span style={{ display: "block", height: "100%", width: `${(p.presion / mx) * 100}%`, background: T.steel, borderRadius: 3 }} />
+                                      </span>
+                                      <span style={{ width: 56, textAlign: "right", fontWeight: 700, color: T.ink }}>{p.presion} psi</span>
+                                    </div>
+                                  )); })()}
+                                </div>
+                                {presiones.length === 1 && <p style={{ fontSize: 11, color: T.inkSoft, margin: "6px 0 0" }}>Registra la presión en más atenciones para ver la tendencia.</p>}
+                              </div>
+                            )}
                             {!hist.length ? (
                               <p style={{ fontSize: 13, color: T.inkSoft, margin: 0 }}>Sin atenciones registradas todavía. Usa <strong>+ Falla</strong> o <strong>+ Preventivo</strong> para empezar su historial.</p>
                             ) : (
@@ -1246,7 +1272,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar,
                                       {a.tipo === "preventiva"
                                         ? `${nT} tarea${nT === 1 ? "" : "s"} del checklist`
                                         : (a.causa || "Falla") + (a.horasFuera ? ` · ${a.horasFuera} h fuera de servicio` : "")}
-                                      {a.kgGas > 0 ? ` · ${a.kgGas} kg de gas` : ""}{a.tecnico ? ` · ${a.tecnico}` : ""}
+                                      {a.kgGas > 0 ? ` · ${a.kgGas} kg de gas` : ""}{a.presion > 0 ? ` · ${a.presion} psi` : ""}{a.tecnico ? ` · ${a.tecnico}` : ""}
                                       {a.nota && <div style={{ color: T.inkSoft }}>{a.nota}</div>}
                                     </span>
                                     {onEliminarAtencion && <button title="Eliminar registro" onClick={() => onEliminarAtencion(a.id)} style={{ ...btnGhost(T.danger), padding: "2px 9px", flexShrink: 0 }}>×</button>}
@@ -1286,7 +1312,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar,
 /* ============================================================ REGISTRAR (atenciones + lecturas) */
 function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion }) {
   const [modo, setModo] = useState("correctiva");
-  const [f, setF] = useState({ equipoId: "", fecha: hoy(), causa: "", horasFuera: "", kgGas: "", tecnico: "", nota: "", valor: "" });
+  const [f, setF] = useState({ equipoId: "", fecha: hoy(), causa: "", horasFuera: "", kgGas: "", presion: "", tecnico: "", nota: "", valor: "" });
   const [checks, setChecks] = useState({});
   const [obsPend, setObsPend] = useState("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -1324,12 +1350,12 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
     onAtencion({
       equipoId: f.equipoId, tipo: modo, fecha: f.fecha,
       causa: esFalla ? f.causa : "", horasFuera: esFalla ? +f.horasFuera : 0,
-      kgGas: f.kgGas === "" ? 0 : +f.kgGas, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
+      kgGas: f.kgGas === "" ? 0 : +f.kgGas, presion: f.presion === "" ? 0 : +f.presion, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
       tareas: esPrev ? tareas.filter((t) => checks[t]) : [],
     });
     if (obsPend.trim() && onObservacion) onObservacion({ equipoId: f.equipoId, texto: obsPend.trim(), autor: f.tecnico.trim(), origen: modo });
     setObsPend("");
-    setF({ ...f, causa: "", horasFuera: "", kgGas: "", nota: "" });
+    setF({ ...f, causa: "", horasFuera: "", kgGas: "", presion: "", nota: "" });
     setChecks({});
   };
 
@@ -1394,6 +1420,12 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
           {!esLectura && (
             <Field label="Refrigerante cargado (kg)" ayuda="Si se recargó gas, anota los kilos. El sistema acumula el consumo por equipo: un equipo que pide gas todos los meses tiene una fuga crónica — dato clave para justificar su reparación de fondo o reemplazo.">
               <input style={inputStyle} type="number" min="0" step="0.1" value={f.kgGas} onChange={set("kgGas")} placeholder="0" />
+            </Field>
+          )}
+
+          {!esLectura && (
+            <Field label="Presión final (psi)" ayuda="Presión a la que quedó el sistema tras la atención (lectura de diagnóstico). Es distinta de los kilos de gas: los kg son la cantidad cargada; los psi son la presión de operación. Opcional.">
+              <input style={inputStyle} type="number" min="0" step="1" value={f.presion} onChange={set("presion")} placeholder="Ej: 110" />
             </Field>
           )}
 
@@ -1988,6 +2020,80 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
   }, [atFiltradas, equipos, periodo]);
   const dDias = (h) => (Number.isFinite(h) ? fmt(h / 24, 0) + " d" : "—");
 
+  /* ---- exportar todo a Excel (carga SheetJS desde CDN, sin dependencias) ---- */
+  const [exportando, setExportando] = useState(false);
+  const cargarXLSX = () => new Promise((resolve, reject) => {
+    if (window.XLSX) return resolve(window.XLSX);
+    const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+    sc.onload = () => resolve(window.XLSX);
+    sc.onerror = () => reject(new Error("No se pudo cargar la librería de Excel (revisa tu conexión)."));
+    document.body.appendChild(sc);
+  });
+  const exportarExcel = async () => {
+    setExportando(true);
+    try {
+      const XLSX = await cargarXLSX();
+      const areaDe = (id) => { const e = equipoDe(id); return e ? gerenciaDe(e) : ""; };
+      const fAll = atenciones.filter((a) => a.tipo !== "preventiva");
+      const pAll = atenciones.filter((a) => a.tipo === "preventiva");
+      const nEq = equipos.length;
+      const horasFueraAll = fAll.reduce((s, a) => s + (+a.horasFuera || 0), 0);
+      const gasAll = atenciones.reduce((s, a) => s + (+a.kgGas || 0), 0);
+      const fechas = atenciones.map((a) => a.fecha).filter(Boolean).sort();
+      const dias = fechas.length ? Math.max(1, Math.ceil((Date.now() - new Date(fechas[0]).getTime()) / 86400000)) : 1;
+      const horasP = dias * 24;
+      const N = fAll.length;
+      const mttr = N ? horasFueraAll / N : 0;
+      const mtbf = N ? Math.max(1, nEq * horasP - horasFueraAll) / N : 0;
+      const disp = mtbf ? mtbf / (mtbf + mttr) : 0;
+      const crit = { A: 0, B: 0, C: 0 };
+      equipos.forEach((e) => { crit[e.criticidad] = (crit[e.criticidad] || 0) + 1; });
+
+      const inv = equipos.map((e) => ({ "Área/Gerencia": gerenciaDe(e), "Código": e.nombre, "Ubicación": e.ubicacion, "Tipo": e.tipo, "Capacidad": e.capacidad, "Serial": e.serial, "Refrigerante": e.refrigerante, "Criticidad": e.criticidad, "Frecuencia (días)": e.intervaloDias, "Último preventivo": e.ultimoPrev, "Temp mín": e.tempMin, "Temp máx": e.tempMax }));
+      const hist = atenciones.slice().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha))).map((a) => ({ "Fecha": a.fecha, "Área": areaDe(a.equipoId), "Equipo": nombre(a.equipoId), "Tipo": a.tipo === "preventiva" ? "Preventivo" : "Falla", "Causa": a.causa, "Horas fuera": a.horasFuera, "Kg gas": a.kgGas, "Presión (psi)": a.presion || "", "Técnico": a.tecnico, "Nota": a.nota, "Tareas del checklist": (a.tareas || []).join(" · ") }));
+      const resumen = [
+        { "Indicador": "Total de equipos", "Valor": nEq },
+        { "Indicador": "Criticidad A", "Valor": crit.A || 0 },
+        { "Indicador": "Criticidad B", "Valor": crit.B || 0 },
+        { "Indicador": "Criticidad C", "Valor": crit.C || 0 },
+        { "Indicador": "Fallas registradas", "Valor": N },
+        { "Indicador": "Preventivos registrados", "Valor": pAll.length },
+        { "Indicador": "Horas fuera de servicio (total)", "Valor": horasFueraAll },
+        { "Indicador": "MTBF del parque (días)", "Valor": (mtbf / 24).toFixed(0) },
+        { "Indicador": "MTTR (horas)", "Valor": mttr.toFixed(1) },
+        { "Indicador": "Disponibilidad del parque", "Valor": (disp * 100).toFixed(1) + " %" },
+        { "Indicador": "Refrigerante consumido (kg)", "Valor": gasAll.toFixed(2) },
+        { "Indicador": "Período cubierto (días)", "Valor": dias },
+        { "Indicador": "Generado", "Valor": new Date().toLocaleString("es-VE") },
+      ];
+      const cAcc = {};
+      fAll.forEach((a) => { const c = a.causa || "Otra"; if (!cAcc[c]) cAcc[c] = { n: 0, h: 0 }; cAcc[c].n++; cAcc[c].h += +a.horasFuera || 0; });
+      const totalH = Object.values(cAcc).reduce((s, v) => s + v.h, 0) || 1;
+      let acH = 0;
+      const pareto = Object.entries(cAcc).sort((a, b) => b[1].h - a[1].h).map(([c, v]) => { acH += v.h; return { "Causa": c, "N° fallas": v.n, "Horas fuera": v.h, "% del total": ((v.h / totalH) * 100).toFixed(1) + " %", "% acumulado": ((acH / totalH) * 100).toFixed(1) + " %" }; });
+      const eAcc = {};
+      fAll.forEach((a) => { if (!eAcc[a.equipoId]) eAcc[a.equipoId] = { n: 0, h: 0 }; eAcc[a.equipoId].n++; eAcc[a.equipoId].h += +a.horasFuera || 0; });
+      const reinc = Object.entries(eAcc).sort((a, b) => b[1].n - a[1].n || b[1].h - a[1].h).map(([id, v]) => { const opEq = Math.max(1, horasP - v.h); const mb = opEq / v.n; const mt = v.h / v.n; return { "Equipo": nombre(id), "Área": areaDe(id), "N° fallas": v.n, "Horas fuera": v.h, "MTBF (días)": (mb / 24).toFixed(0), "MTTR (h)": mt.toFixed(1), "Disponibilidad": ((mb / (mb + mt)) * 100).toFixed(1) + " %" }; });
+      const gAcc = {};
+      atenciones.forEach((a) => { if ((+a.kgGas || 0) > 0) { if (!gAcc[a.equipoId]) gAcc[a.equipoId] = { kg: 0, r: 0 }; gAcc[a.equipoId].kg += +a.kgGas; gAcc[a.equipoId].r++; } });
+      const gas = Object.entries(gAcc).sort((a, b) => b[1].kg - a[1].kg).map(([id, v]) => ({ "Equipo": nombre(id), "Área": areaDe(id), "Kg totales": +v.kg.toFixed(2), "N° recargas": v.r, "¿Sospechoso de fuga?": v.r >= 2 ? "Sí" : "No" }));
+
+      const wb = XLSX.utils.book_new();
+      const add = (rows, name) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ "—": "Sin datos" }]), name);
+      add(resumen, "Resumen");
+      add(inv, "Inventario");
+      add(hist, "Fallas y preventivos");
+      add(pareto, "Pareto causas");
+      add(reinc, "Equipos reincidentes");
+      add(gas, "Consumo refrigerante");
+      XLSX.writeFile(wb, "TPM_FMO_reporte_" + hoy() + ".xlsx");
+    } catch (e) {
+      alert("No se pudo exportar: " + e.message);
+    }
+    setExportando(false);
+  };
+
   if (!equipos.length)
     return (
       <div style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 24 }}>
@@ -2018,6 +2124,16 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <strong style={{ fontFamily: display, fontSize: 17, textTransform: "uppercase" }}>Exportar reporte</strong>
+          <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 2 }}>Descarga un Excel con inventario por área y criticidad, historial, indicadores, Pareto, reincidentes y consumo de gas.</div>
+        </div>
+        <button style={{ ...btn(T.ok), opacity: exportando ? 0.6 : 1 }} disabled={exportando} onClick={exportarExcel}>
+          {exportando ? "Generando…" : "⬇ Exportar a Excel"}
+        </button>
+      </section>
+
       <EstadoMantenimiento equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />
 
       {/* ------- resumen ejecutivo ------- */}
