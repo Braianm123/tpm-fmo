@@ -2031,6 +2031,7 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
     document.body.appendChild(sc);
   });
   const exportarExcel = async () => {
+    if (!equipos.length) { alert("Los datos aún no han cargado desde la nube. Espera a que la app muestre \"En línea · sincronizado\" arriba y vuelve a intentar."); return; }
     setExportando(true);
     try {
       const XLSX = await cargarXLSX();
@@ -2050,8 +2051,8 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
       const crit = { A: 0, B: 0, C: 0 };
       equipos.forEach((e) => { crit[e.criticidad] = (crit[e.criticidad] || 0) + 1; });
 
-      const inv = equipos.map((e) => ({ "Área/Gerencia": gerenciaDe(e), "Código": e.nombre, "Ubicación": e.ubicacion, "Tipo": e.tipo, "Capacidad": e.capacidad, "Serial": e.serial, "Refrigerante": e.refrigerante, "Criticidad": e.criticidad, "Frecuencia (días)": e.intervaloDias, "Último preventivo": e.ultimoPrev, "Temp mín": e.tempMin, "Temp máx": e.tempMax }));
-      const hist = atenciones.slice().sort((a, b) => String(b.fecha).localeCompare(String(a.fecha))).map((a) => ({ "Fecha": a.fecha, "Área": areaDe(a.equipoId), "Equipo": nombre(a.equipoId), "Tipo": a.tipo === "preventiva" ? "Preventivo" : "Falla", "Causa": a.causa, "Horas fuera": a.horasFuera, "Kg gas": a.kgGas, "Presión (psi)": a.presion || "", "Técnico": a.tecnico, "Nota": a.nota, "Tareas del checklist": (a.tareas || []).join(" · ") }));
+      const inv = equipos.slice().sort((a, b) => gerenciaDe(a).localeCompare(gerenciaDe(b)) || String(a.nombre).localeCompare(String(b.nombre))).map((e) => ({ "Área/Gerencia": gerenciaDe(e), "Código": e.nombre, "Ubicación": e.ubicacion, "Tipo": e.tipo, "Capacidad": e.capacidad, "Serial": e.serial, "Refrigerante": e.refrigerante, "Criticidad": e.criticidad, "Frecuencia (días)": e.intervaloDias, "Último preventivo": e.ultimoPrev, "Temp mín": e.tempMin, "Temp máx": e.tempMax }));
+      const hist = atenciones.slice().sort((a, b) => areaDe(a.equipoId).localeCompare(areaDe(b.equipoId)) || String(b.fecha).localeCompare(String(a.fecha))).map((a) => ({ "Fecha": a.fecha, "Área": areaDe(a.equipoId), "Equipo": nombre(a.equipoId), "Tipo": a.tipo === "preventiva" ? "Preventivo" : "Falla", "Causa": a.causa, "Horas fuera": a.horasFuera, "Kg gas": a.kgGas, "Presión (psi)": a.presion || "", "Técnico": a.tecnico, "Nota": a.nota, "Tareas del checklist": (a.tareas || []).join(" · ") }));
       const resumen = [
         { "Indicador": "Total de equipos", "Valor": nEq },
         { "Indicador": "Criticidad A", "Valor": crit.A || 0 },
@@ -2074,10 +2075,10 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
       const pareto = Object.entries(cAcc).sort((a, b) => b[1].h - a[1].h).map(([c, v]) => { acH += v.h; return { "Causa": c, "N° fallas": v.n, "Horas fuera": v.h, "% del total": ((v.h / totalH) * 100).toFixed(1) + " %", "% acumulado": ((acH / totalH) * 100).toFixed(1) + " %" }; });
       const eAcc = {};
       fAll.forEach((a) => { if (!eAcc[a.equipoId]) eAcc[a.equipoId] = { n: 0, h: 0 }; eAcc[a.equipoId].n++; eAcc[a.equipoId].h += +a.horasFuera || 0; });
-      const reinc = Object.entries(eAcc).sort((a, b) => b[1].n - a[1].n || b[1].h - a[1].h).map(([id, v]) => { const opEq = Math.max(1, horasP - v.h); const mb = opEq / v.n; const mt = v.h / v.n; return { "Equipo": nombre(id), "Área": areaDe(id), "N° fallas": v.n, "Horas fuera": v.h, "MTBF (días)": (mb / 24).toFixed(0), "MTTR (h)": mt.toFixed(1), "Disponibilidad": ((mb / (mb + mt)) * 100).toFixed(1) + " %" }; });
+      const reinc = Object.entries(eAcc).sort((a, b) => areaDe(a[0]).localeCompare(areaDe(b[0])) || b[1].n - a[1].n || b[1].h - a[1].h).map(([id, v]) => { const opEq = Math.max(1, horasP - v.h); const mb = opEq / v.n; const mt = v.h / v.n; return { "Equipo": nombre(id), "Área": areaDe(id), "N° fallas": v.n, "Horas fuera": v.h, "MTBF (días)": (mb / 24).toFixed(0), "MTTR (h)": mt.toFixed(1), "Disponibilidad": ((mb / (mb + mt)) * 100).toFixed(1) + " %" }; });
       const gAcc = {};
       atenciones.forEach((a) => { if ((+a.kgGas || 0) > 0) { if (!gAcc[a.equipoId]) gAcc[a.equipoId] = { kg: 0, r: 0 }; gAcc[a.equipoId].kg += +a.kgGas; gAcc[a.equipoId].r++; } });
-      const gas = Object.entries(gAcc).sort((a, b) => b[1].kg - a[1].kg).map(([id, v]) => ({ "Equipo": nombre(id), "Área": areaDe(id), "Kg totales": +v.kg.toFixed(2), "N° recargas": v.r, "¿Sospechoso de fuga?": v.r >= 2 ? "Sí" : "No" }));
+      const gas = Object.entries(gAcc).sort((a, b) => areaDe(a[0]).localeCompare(areaDe(b[0])) || b[1].kg - a[1].kg).map(([id, v]) => ({ "Equipo": nombre(id), "Área": areaDe(id), "Kg totales": +v.kg.toFixed(2), "N° recargas": v.r, "¿Sospechoso de fuga?": v.r >= 2 ? "Sí" : "No" }));
 
       const wb = XLSX.utils.book_new();
       const add = (rows, name) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{ "—": "Sin datos" }]), name);
