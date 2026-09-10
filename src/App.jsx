@@ -102,7 +102,7 @@ const deObservacionDB = (r) => ({
 
 const TIPOS_EQUIPO = ["Split", "A/A ventana", "Central / compacto", "Aire de precisión", "Cava / cuarto frío", "Chiller", "Nevera / congelador", "Bebedero", "Otro"];
 const CRITICIDAD = ["A", "B", "C"];
-const REFRIGERANTES = ["R-22", "R-410A", "R-134a", "R-404A", "R-407C", "Otro", "No determinado"];
+const REFRIGERANTES = ["R-22", "R-410A", "R-32", "R-134a", "R-404A", "R-407C", "Otro", "No determinado"];
 const CAUSAS_FALLA = ["Fuga de refrigerante", "Falla de compresor", "Falla eléctrica / contactor", "Serpentín sucio / obstrucción", "Ventilador / motor", "Termostato / control", "Drenaje / condensado", "Otra"];
 
 /* ---------- checklist de preventivo según tipo de equipo ---------- */
@@ -732,6 +732,8 @@ function Login() {
 /* ============================================================ TABLERO */
 function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPrev, alertasTemp, irA, onEjemplo, onReal }) {
   const [busqueda, setBusqueda] = useState("");
+  const [busquedaDif, setBusquedaDif] = useState("");
+  useEffect(() => { const t = setTimeout(() => setBusquedaDif(busqueda), 200); return () => clearTimeout(t); }, [busqueda]);
   const [abiertas, setAbiertas] = useState({});
   const [filtroAlerta, setFiltroAlerta] = useState("danger");
   const [gruposAbiertos, setGruposAbiertos] = useState({});
@@ -882,7 +884,7 @@ function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPre
           onChange={(e) => setBusqueda(e.target.value)}
         />
         {(() => {
-          const q = busqueda.trim().toLowerCase();
+          const q = busquedaDif.trim().toLowerCase();
           const grupos = {};
           equipos.forEach((e) => {
             const g = gerenciaDe(e);
@@ -1026,6 +1028,8 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar,
   const vacio = { nombre: "", tipo: TIPOS_EQUIPO[0], gerencia: "", ubicacion: "", marcaModelo: "", serial: "", refrigerante: REFRIGERANTES[0], anio: "", capacidad: "", criticidad: "B", intervaloDias: "90", ultimoPrev: hoy(), tempMin: "", tempMax: "" };
   const [f, setF] = useState(vacio);
   const [busqueda, setBusqueda] = useState("");
+  const [busquedaDif, setBusquedaDif] = useState("");
+  useEffect(() => { const t = setTimeout(() => setBusquedaDif(busqueda), 200); return () => clearTimeout(t); }, [busqueda]);
   const [abiertas, setAbiertas] = useState({});
   const [editando, setEditando] = useState(null);
   const [fe, setFe] = useState(vacio);
@@ -1069,7 +1073,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar,
   const fmtF = (s) => (s ? String(s).slice(0, 10).split("-").reverse().join("/") : "—");
 
   /* agrupación por área con buscador (mismo criterio del Tablero) */
-  const q = busqueda.trim().toLowerCase();
+  const q = busquedaDif.trim().toLowerCase();
   const coincide = (e) => (e.nombre + " " + e.ubicacion + " " + e.tipo + " " + (e.serial || "") + " " + (e.marcaModelo || "")).toLowerCase().includes(q);
   const grupos = {};
   equipos.forEach((e) => { const g = gerenciaDe(e); (grupos[g] = grupos[g] || []).push(e); });
@@ -1315,6 +1319,7 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
   const [f, setF] = useState({ equipoId: "", fecha: hoy(), causa: "", horasFuera: "", kgGas: "", presion: "", tecnico: "", nota: "", valor: "" });
   const [checks, setChecks] = useState({});
   const [obsPend, setObsPend] = useState("");
+  const [causaOtra, setCausaOtra] = useState("");
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   /* llegada desde la tarjeta de un equipo: lo deja seleccionado y en el modo pedido */
@@ -1349,13 +1354,14 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
     }
     onAtencion({
       equipoId: f.equipoId, tipo: modo, fecha: f.fecha,
-      causa: esFalla ? f.causa : "", horasFuera: esFalla ? +f.horasFuera : 0,
+      causa: esFalla ? (f.causa === "Otra" && causaOtra.trim() ? causaOtra.trim() : f.causa) : "", horasFuera: esFalla ? +f.horasFuera : 0,
       kgGas: f.kgGas === "" ? 0 : +f.kgGas, presion: f.presion === "" ? 0 : +f.presion, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
       tareas: esPrev ? tareas.filter((t) => checks[t]) : [],
     });
     if (obsPend.trim() && onObservacion) onObservacion({ equipoId: f.equipoId, texto: obsPend.trim(), autor: f.tecnico.trim(), origen: modo });
     setObsPend("");
     setF({ ...f, causa: "", horasFuera: "", kgGas: "", presion: "", nota: "" });
+    setCausaOtra("");
     setChecks({});
   };
 
@@ -1405,6 +1411,11 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
                   {CAUSAS_FALLA.map((c) => <option key={c}>{c}</option>)}
                 </select>
               </Field>
+              {f.causa === "Otra" && (
+                <Field label="¿Cuál fue la falla?" ancho={240} ayuda="Escribe la falla exacta para que quede registrada tal cual y no como «Otra». Así el análisis y el Pareto la reflejan con su nombre real.">
+                  <input style={inputStyle} value={causaOtra} onChange={(e) => setCausaOtra(e.target.value)} placeholder="Ej: capacitor de arranque dañado" />
+                </Field>
+              )}
               <Field label="Horas fuera de servicio" ayuda="Desde que dejó de funcionar (o se reportó) hasta quedar operativo. Si duró dos días, son 48.">
                 <input style={inputStyle} type="number" min="0" step="0.5" value={f.horasFuera} onChange={set("horasFuera")} placeholder="4" />
               </Field>
