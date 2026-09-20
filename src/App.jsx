@@ -517,17 +517,43 @@ export default function TPMFMO() {
   const registrarJornada = (j) => {
     const nueva = { id: uid(), ...j };
     setJornadas((js) => [nueva, ...js]);
-    /* actualizar ultimo preventivo de todos los equipos del area (reinicia su semaforo) */
-    const equiposArea = equipos.filter((e) => gerenciaDe(e) === j.gerencia);
-    const ops = [{ tabla: "jornadas", op: "upsert", datos: aJornadaDB(nueva, usuario.id) }];
     const fecha = j.fechaFin || j.fechaInicio;
-    equiposArea.forEach((e) => {
-      const act = { ...e, ultimoPrev: fecha };
+    const ops = [{ tabla: "jornadas", op: "upsert", datos: aJornadaDB(nueva, usuario.id) }];
+    /* equipos atendidos: si la jornada trae equiposIds, se usan esos; si no, toda el área */
+    const idsAtendidos = (j.equiposIds && j.equiposIds.length)
+      ? j.equiposIds
+      : equipos.filter((e) => gerenciaDe(e) === j.gerencia).map((e) => e.id);
+    const tareasJ = j.tareas || [];
+    const nuevasAt = [];
+    idsAtendidos.forEach((id) => {
+      const eq = equipos.find((e) => e.id === id);
+      if (!eq) return;
+      /* 1) reinicia el semáforo del equipo */
+      const act = { ...eq, ultimoPrev: fecha };
       ops.push({ tabla: "equipos", op: "upsert", datos: aEquipoDB(act, usuario.id) });
+      /* 2) genera un preventivo individual por equipo (alimenta el análisis y el estudio) */
+      if (tareasJ.length) {
+        const at = { id: uid(), equipoId: id, tipo: "preventiva", fecha, causa: "", horasFuera: 0,
+          kgGas: 0, presion: 0, tecnico: j.tecnico || "", nota: `Jornada · ${j.gerencia}`, tareas: tareasJ };
+        nuevasAt.push(at);
+        ops.push({ tabla: "atenciones", op: "upsert", datos: aAtencionDB(at, usuario.id) });
+      }
     });
-    if (equiposArea.length) setEquipos((xs) => xs.map((e) => (gerenciaDe(e) === j.gerencia ? { ...e, ultimoPrev: fecha } : e)));
+    if (nuevasAt.length) setAtenciones((as) => [...nuevasAt, ...as]);
+    setEquipos((xs) => xs.map((e) => (idsAtendidos.includes(e.id) ? { ...e, ultimoPrev: fecha } : e)));
     persistir(ops);
-    notificar(`Jornada registrada · ${j.gerencia} · semáforo del área reiniciado`);
+    notificar(`Jornada registrada · ${idsAtendidos.length} equipo(s)${tareasJ.length ? " · preventivos individuales generados" : ""}`);
+  };
+  const eliminarJornada = (id) => {
+    const j = jornadas.find((x) => x.id === id);
+    pedirConfirmacion(
+      `¿Eliminar la jornada de "${j ? j.gerencia : ""}"? Se quitará del listado. Los preventivos individuales que haya generado NO se borran (elimínalos desde el historial de cada equipo si hace falta).`,
+      () => {
+        setJornadas((js) => js.filter((x) => x.id !== id));
+        persistir([{ tabla: "jornadas", op: "delete", id }]);
+        notificar("Jornada eliminada");
+      }
+    );
   };
 
   /* ---- aires montados (instalaciones nuevas) ---- */
@@ -659,7 +685,7 @@ export default function TPMFMO() {
         {tab === "tablero" && <Tablero equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
         {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} onAgregarObs={agregarObservacion} onResolverObs={resolverObservacion} onEliminarObs={eliminarObservacion} onEliminarAtencion={eliminarAtencion} />}
         {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} onObservacion={agregarObservacion} />}
-        {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} />}
+        {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} onEliminar={eliminarJornada} />}
         {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} />}
         {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} onEliminar={eliminarAtencion} />}
         {tab === "guia" && <Guia onVaciar={vaciarTodo} onReal={cargarReal} />}
@@ -1492,21 +1518,26 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
 }
 
 /* ============================================================ JORNADAS DE MANTENIMIENTO POR ÁREA */
-function Jornadas({ equipos, jornadas, onRegistrar }) {
+function Jornadas({ equipos, jornadas, onRegistrar, onEliminar }) {
+  const JORNADA_CHECKLIST = ["Limpieza de filtros de aire", "Limpieza de serpentines (evaporador y condensador)", "Verificación de carga de refrigerante y presiones", "Revisión de conexiones eléctricas y contactor", "Medición de amperaje del compresor", "Limpieza de bandeja y drenaje de condensado", "Verificación de temperatura de operación", "Ajuste de termostato"];
   const gerencias = [...new Set(equipos.map(gerenciaDe))].sort();
-  const [f, setF] = useState({ gerencia: "", fechaInicio: hoy(), fechaFin: hoy(), equiposAtendidos: "", tecnico: "", nota: "" });
-  const [fotos, setFotos] = useState([]); // solo en memoria (para el informe del momento)
+  const [f, setF] = useState({ gerencia: "", fechaInicio: hoy(), fechaFin: hoy(), tecnico: "", nota: "" });
+  const [sel, setSel] = useState({});      // equipoId -> bool (equipos atendidos)
+  const [checks, setChecks] = useState({}); // tarea -> bool (checklist de la jornada)
+  const [fotos, setFotos] = useState([]);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   const equiposDelArea = f.gerencia ? equipos.filter((e) => gerenciaDe(e) === f.gerencia) : [];
   const totalArea = equiposDelArea.length;
+  const idsSel = equiposDelArea.filter((e) => sel[e.id]).map((e) => e.id);
+  const nSel = idsSel.length;
+  const nHechas = JORNADA_CHECKLIST.filter((t) => checks[t]).length;
 
-  /* al elegir area, sugerir el total de equipos */
-  const elegirArea = (e) => {
-    const g = e.target.value;
-    const n = equipos.filter((x) => gerenciaDe(x) === g).length;
-    setF({ ...f, gerencia: g, equiposAtendidos: n ? String(n) : "" });
-  };
+  const elegirArea = (e) => { setF({ ...f, gerencia: e.target.value }); setSel({}); };
+  const toggleEq = (id) => setSel((s) => ({ ...s, [id]: !s[id] }));
+  const marcarTodos = () => { const o = {}; equiposDelArea.forEach((e) => (o[e.id] = true)); setSel(o); };
+  const marcarNinguno = () => setSel({});
+  const toggleTarea = (t) => setChecks((c) => ({ ...c, [t]: !c[t] }));
 
   const agregarFotos = (e) => {
     const files = Array.from(e.target.files || []);
@@ -1519,22 +1550,21 @@ function Jornadas({ equipos, jornadas, onRegistrar }) {
   };
   const quitarFoto = (i) => setFotos((fs) => fs.filter((_, k) => k !== i));
 
-  const listo = f.gerencia && f.fechaInicio && +f.equiposAtendidos > 0;
+  const listo = f.gerencia && f.fechaInicio && nSel > 0;
   const guardar = () => {
     if (!listo) return;
-    /* desglose por tipo de equipo del área, para el registro tipo informe */
+    const atendidos = equiposDelArea.filter((e) => sel[e.id]);
     const desglose = {};
-    equiposDelArea.forEach((e) => { desglose[e.tipo] = (desglose[e.tipo] || 0) + 1; });
+    atendidos.forEach((e) => { desglose[e.tipo] = (desglose[e.tipo] || 0) + 1; });
+    const tareas = JORNADA_CHECKLIST.filter((t) => checks[t]);
     onRegistrar({
       gerencia: f.gerencia, fechaInicio: f.fechaInicio, fechaFin: f.fechaFin || f.fechaInicio,
-      equiposAtendidos: +f.equiposAtendidos, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
+      equiposAtendidos: nSel, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
       desglose: Object.entries(desglose).map(([tipo, n]) => ({ tipo, n })),
+      equiposIds: idsSel, tareas,
     });
-    setF({ ...f, equiposAtendidos: "", nota: "" });
-    setFotos([]);
+    setSel({}); setChecks({}); setF({ ...f, nota: "" }); setFotos([]);
   };
-
-  const nombreArea = (id) => equipos.find((e) => e.id === id)?.nombre || "";
 
   if (!equipos.length)
     return <p style={{ color: T.inkSoft }}>Primero carga el inventario de equipos (Guía → Cargar Programa 2026, o pestaña Equipos).</p>;
@@ -1544,7 +1574,7 @@ function Jornadas({ equipos, jornadas, onRegistrar }) {
       <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
         <h2 style={h2Style}>
           Registrar jornada de mantenimiento
-          <Ayuda texto="Registra el mantenimiento preventivo de toda un área en una sola jornada, como en los informes: seleccionas el área, el rango de fechas, cuántos equipos se atendieron y el técnico responsable. Al guardar, se reinicia el semáforo de preventivo de todos los equipos de esa área. Las fotos son solo para armar el informe del momento y no se guardan, para no ocupar espacio." />
+          <Ayuda texto="Una jornada documenta el mantenimiento preventivo de un área que se atiende en uno o varios días (como los informes del área). Selecciona el área, el rango de fechas, marca los equipos que se atendieron y el checklist de tareas realizadas. Al guardar, se genera un preventivo individual por cada equipo marcado (con su checklist), de modo que la jornada también alimenta el historial y los indicadores del estudio. Las fotos son solo para el informe del momento y no se guardan en la nube." />
         </h2>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
           <Field label="Área / Gerencia" ancho={220}>
@@ -1562,9 +1592,6 @@ function Jornadas({ equipos, jornadas, onRegistrar }) {
           <Field label="Fecha fin">
             <input style={inputStyle} type="date" value={f.fechaFin} onChange={set("fechaFin")} />
           </Field>
-          <Field label="Equipos atendidos" ayuda="Número de equipos a los que se les hizo mantenimiento en esta jornada. Se sugiere el total del área, ajústalo si se atendieron menos.">
-            <input style={inputStyle} type="number" min="1" max={totalArea || undefined} value={f.equiposAtendidos} onChange={set("equiposAtendidos")} placeholder={totalArea ? String(totalArea) : "0"} />
-          </Field>
           <Field label="Técnico / cuadrilla">
             <input style={inputStyle} value={f.tecnico} onChange={set("tecnico")} placeholder="Empresa TITAN / J. Pérez" />
           </Field>
@@ -1574,21 +1601,45 @@ function Jornadas({ equipos, jornadas, onRegistrar }) {
         </div>
 
         {f.gerencia && totalArea > 0 && (
-          <div style={{ marginTop: 12, padding: "10px 14px", background: "#FAFBFC", border: `1.5px solid ${T.line}`, borderRadius: 8 }}>
-            <strong style={{ fontFamily: display, fontSize: 15, textTransform: "uppercase", color: T.inkSoft }}>Equipos del área ({totalArea})</strong>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-              {Object.entries(equiposDelArea.reduce((a, e) => { a[e.tipo] = (a[e.tipo] || 0) + 1; return a; }, {})).map(([t, n]) => (
-                <span key={t} style={{ fontFamily: mono, fontSize: 12, padding: "3px 10px", borderRadius: 6, background: T.bg, border: `1px solid ${T.line}` }}>{t}: {n}</span>
+          <div style={{ marginTop: 14, padding: "12px 14px", background: "#FAFBFC", border: `1.5px solid ${T.line}`, borderRadius: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <strong style={{ fontFamily: display, fontSize: 15, textTransform: "uppercase", color: T.inkSoft }}>Equipos atendidos ({nSel} / {totalArea})</strong>
+              <span style={{ display: "flex", gap: 6 }}>
+                <button style={btnGhost(T.steel)} onClick={marcarTodos}>Todos</button>
+                <button style={btnGhost(T.inkSoft)} onClick={marcarNinguno}>Ninguno</button>
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 4, marginTop: 8, maxHeight: 240, overflowY: "auto" }}>
+              {equiposDelArea.map((e) => (
+                <label key={e.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 6px", borderRadius: 6, cursor: "pointer", fontSize: 13, background: sel[e.id] ? "rgba(46,125,50,0.08)" : "transparent" }}>
+                  <input type="checkbox" checked={!!sel[e.id]} onChange={() => toggleEq(e.id)} style={{ width: 16, height: 16, accentColor: T.ok, flexShrink: 0 }} />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><strong style={{ fontFamily: mono }}>{e.nombre}</strong> · {e.ubicacion}</span>
+                </label>
               ))}
             </div>
           </div>
         )}
 
-        {/* fotos de evidencia (memoria) */}
+        {nSel > 0 && (
+          <div style={{ marginTop: 14, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 14, background: "#FAFBFC" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              <strong style={{ fontFamily: display, fontSize: 16, textTransform: "uppercase" }}>Checklist de la jornada</strong>
+              <span style={{ fontFamily: mono, fontSize: 13, color: nHechas === JORNADA_CHECKLIST.length ? T.ok : T.inkSoft }}>{nHechas} / {JORNADA_CHECKLIST.length} tareas</span>
+            </div>
+            {JORNADA_CHECKLIST.map((t) => (
+              <label key={t} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${T.line}`, cursor: "pointer", fontSize: 14 }}>
+                <input type="checkbox" checked={!!checks[t]} onChange={() => toggleTarea(t)} style={{ width: 17, height: 17, marginTop: 2, accentColor: T.ok, flexShrink: 0 }} />
+                <span style={{ color: checks[t] ? T.ink : T.inkSoft }}>{t}</span>
+              </label>
+            ))}
+            <p style={{ fontSize: 12, color: T.inkSoft, margin: "8px 0 0" }}>Las tareas marcadas se guardan como el preventivo de cada equipo atendido, quedando en su historial como evidencia y alimentando los indicadores del estudio.</p>
+          </div>
+        )}
+
         <div style={{ marginTop: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <strong style={{ fontFamily: display, fontSize: 15, textTransform: "uppercase", color: T.inkSoft }}>Evidencias fotográficas</strong>
-            <Ayuda texto="Adjunta fotos del trabajo realizado para tenerlas a la vista al armar el informe. No se almacenan en la nube: son temporales de esta sesión, para mantener la app liviana y rápida." />
+            <Ayuda texto="Adjunta fotos del trabajo realizado para tenerlas a la vista al armar el informe. No se almacenan en la nube: son temporales de esta sesión." />
           </div>
           <label style={{ ...btnGhost(T.steel), display: "inline-block", marginTop: 8, cursor: "pointer" }}>
             + Añadir fotos
@@ -1612,7 +1663,6 @@ function Jornadas({ equipos, jornadas, onRegistrar }) {
         </button>
       </section>
 
-      {/* listado de jornadas tipo informe */}
       <section>
         <h2 style={h2Style}>Jornadas registradas</h2>
         {!jornadas.length ? (
@@ -1624,7 +1674,18 @@ function Jornadas({ equipos, jornadas, onRegistrar }) {
               <div style={{ padding: "12px 16px", flex: 1 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
                   <strong style={{ fontFamily: display, fontSize: 19, textTransform: "uppercase" }}>{j.gerencia}</strong>
-                  <span style={{ fontFamily: mono, fontSize: 13, color: T.ok, fontWeight: 600 }}>{j.equiposAtendidos} equipo{j.equiposAtendidos === 1 ? "" : "s"}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontFamily: mono, fontSize: 13, color: T.ok, fontWeight: 600 }}>{j.equiposAtendidos} equipo{j.equiposAtendidos === 1 ? "" : "s"}</span>
+                    {onEliminar && (
+                      <button
+                        onClick={() => onEliminar(j.id)}
+                        title="Eliminar jornada"
+                        style={{ background: "none", border: "none", cursor: "pointer", color: T.bad, fontFamily: mono, fontSize: 12.5, fontWeight: 600, padding: "2px 6px" }}
+                      >
+                        Eliminar
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, marginTop: 2 }}>
                   Del {j.fechaInicio} al {j.fechaFin}{j.tecnico ? ` · ${j.tecnico}` : ""}
@@ -1930,6 +1991,7 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
 
   /* ---- período de análisis ---- */
   const [periodo, setPeriodo] = useState("90");
+  const [filtroHist, setFiltroHist] = useState("todas");
   const PERIODOS = [["30", "Últimos 30 días"], ["90", "Últimos 90 días"], ["anio", "Este año"], ["todo", "Todo el historial"]];
   const desde = useMemo(() => {
     if (periodo === "todo") return null;
@@ -2091,6 +2153,47 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
       atenciones.forEach((a) => { if ((+a.kgGas || 0) > 0) { if (!gAcc[a.equipoId]) gAcc[a.equipoId] = { kg: 0, r: 0 }; gAcc[a.equipoId].kg += +a.kgGas; gAcc[a.equipoId].r++; } });
       const gas = Object.entries(gAcc).sort((a, b) => areaDe(a[0]).localeCompare(areaDe(b[0])) || b[1].kg - a[1].kg).map(([id, v]) => ({ "Equipo": nombre(id), "Área": areaDe(id), "Kg totales": +v.kg.toFixed(2), "N° recargas": v.r, "¿Sospechoso de fuga?": v.r >= 2 ? "Sí" : "No" }));
 
+      /* --- estado del mantenimiento (cumplimiento del plan) --- */
+      const hoyMs = Date.now();
+      let alDia = 0, vencidos = 0;
+      const vencAreas = {};
+      equipos.forEach((e) => {
+        const d = e.ultimoPrev ? Math.floor((hoyMs - new Date(e.ultimoPrev).getTime()) / 86400000) : null;
+        const venc = d != null && +e.intervaloDias > 0 && d > +e.intervaloDias;
+        if (venc) { vencidos++; vencAreas[gerenciaDe(e)] = (vencAreas[gerenciaDe(e)] || 0) + 1; } else alDia++;
+      });
+      const cumpl = nEq ? (alDia / nEq) * 100 : 0;
+      const porTipo = {}; equipos.forEach((e) => { porTipo[e.tipo] = (porTipo[e.tipo] || 0) + 1; });
+      const estado = [
+        { "Indicador": "Equipos totales", "Valor": nEq },
+        { "Indicador": "Dentro de plazo de preventivo", "Valor": alDia },
+        { "Indicador": "Con preventivo vencido", "Valor": vencidos },
+        { "Indicador": "Cumplimiento del plan", "Valor": cumpl.toFixed(1) + " %" },
+        { "Indicador": "Criticidad A / B / C", "Valor": `${crit.A || 0} / ${crit.B || 0} / ${crit.C || 0}` },
+      ];
+      Object.entries(porTipo).sort((a, b) => b[1] - a[1]).forEach(([t, n]) => estado.push({ "Indicador": "Tipo: " + t, "Valor": n }));
+      const areasVenc = Object.entries(vencAreas).sort((a, b) => b[1] - a[1]).map(([g, n]) => ({ "Área/Gerencia": g, "Equipos vencidos": n }));
+
+      /* --- confiabilidad --- */
+      const lambda = mtbf ? 1 / mtbf : 0;                 // fallas por hora
+      const R30 = lambda ? Math.exp(-lambda * 720) : 1;   // opera 30 días sin fallar
+      const confiab = [
+        { "Indicador": "MTBF del parque (días)", "Valor": (mtbf / 24).toFixed(0) },
+        { "Indicador": "MTTR (horas)", "Valor": mttr.toFixed(1) },
+        { "Indicador": "Disponibilidad", "Valor": (disp * 100).toFixed(1) + " %" },
+        { "Indicador": "Tasa de fallas λ (por 1.000 h)", "Valor": (lambda * 1000).toFixed(3) },
+        { "Indicador": "Confiabilidad a 30 días R(t)", "Valor": (R30 * 100).toFixed(1) + " %" },
+        { "Indicador": "Fallas registradas", "Valor": N },
+        { "Indicador": "Horas fuera de servicio (total)", "Valor": horasFueraAll },
+        { "Indicador": "Período cubierto (días)", "Valor": dias },
+      ];
+
+      /* --- jornadas --- */
+      const jorn = (jornadas || []).slice().sort((a, b) => String(b.fechaInicio).localeCompare(String(a.fechaInicio))).map((j) => ({ "Área/Gerencia": j.gerencia, "Fecha inicio": j.fechaInicio, "Fecha fin": j.fechaFin, "Equipos atendidos": j.equiposAtendidos, "Técnico/cuadrilla": j.tecnico, "Observación": j.nota, "Desglose por tipo": (j.desglose || []).map((d) => `${d.tipo}: ${d.n}`).join(" · ") }));
+
+      /* --- lecturas de temperatura --- */
+      const lect = (lecturas || []).slice().sort((a, b) => areaDe(a.equipoId).localeCompare(areaDe(b.equipoId)) || String(b.fecha).localeCompare(String(a.fecha))).map((l) => ({ "Fecha": l.fecha, "Área": areaDe(l.equipoId), "Equipo": nombre(l.equipoId), "Temperatura (°C)": l.valor, "¿Fuera de rango?": l.fuera ? "Sí" : "No", "Técnico": l.tecnico }));
+
       const wb = XLSX.utils.book_new();
       const add = (rows, name) => {
         const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ "—": "Sin datos" }]);
@@ -2102,11 +2205,16 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
         XLSX.utils.book_append_sheet(wb, ws, name);
       };
       add(resumen, "Resumen");
+      add(estado, "Estado mantenimiento");
+      add(areasVenc, "Áreas con vencidos");
       add(inv, "Inventario");
       add(hist, "Fallas y preventivos");
       add(pareto, "Pareto causas");
+      add(confiab, "Confiabilidad");
       add(reinc, "Equipos reincidentes");
       add(gas, "Consumo refrigerante");
+      add(jorn, "Jornadas");
+      add(lect, "Lecturas temperatura");
       XLSX.writeFile(wb, "TPM_FMO_reporte_" + hoy() + ".xlsx");
     } catch (e) {
       alert("No se pudo exportar: " + e.message);
@@ -2144,16 +2252,6 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
-        <div>
-          <strong style={{ fontFamily: display, fontSize: 17, textTransform: "uppercase" }}>Exportar reporte</strong>
-          <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 2 }}>Descarga un Excel con inventario por área y criticidad, historial, indicadores, Pareto, reincidentes y consumo de gas.</div>
-        </div>
-        <button style={{ ...btn(T.ok), opacity: exportando ? 0.6 : 1 }} disabled={exportando} onClick={exportarExcel}>
-          {exportando ? "Generando…" : "⬇ Exportar a Excel"}
-        </button>
-      </section>
-
       <EstadoMantenimiento equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />
 
       {/* ------- resumen ejecutivo ------- */}
@@ -2376,9 +2474,23 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
 
       {/* ------- historial ------- */}
       <section>
-        <h2 style={h2Style}>Historial de atenciones <span style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, textTransform: "none", letterSpacing: "normal" }}>({etiquetaPeriodo} · {atFiltradas.length})</span></h2>
-        {!atFiltradas.length && <p style={{ color: T.inkSoft }}>Sin atenciones en el período seleccionado — amplía el período para ver registros anteriores.</p>}
-        {atFiltradas.map((a) => (
+        <h2 style={h2Style}>Historial de atenciones <span style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, textTransform: "none", letterSpacing: "normal" }}>({etiquetaPeriodo})</span></h2>
+        {(() => {
+          const nF = atFiltradas.filter((a) => a.tipo === "correctiva").length;
+          const nP = atFiltradas.filter((a) => a.tipo === "preventiva").length;
+          const chips = [["todas", `Todas (${atFiltradas.length})`, T.steel], ["correctiva", `Fallas (${nF})`, T.danger], ["preventiva", `Preventivos (${nP})`, T.ok]];
+          return (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+              {chips.map(([k, lbl, col]) => (
+                <button key={k} onClick={() => setFiltroHist(k)} style={{ ...(filtroHist === k ? btn(col, true) : btnGhost(T.inkSoft)) }}>{lbl}</button>
+              ))}
+            </div>
+          );
+        })()}
+        {(() => {
+          const histMostrado = atFiltradas.filter((a) => filtroHist === "todas" || a.tipo === filtroHist);
+          if (!histMostrado.length) return <p style={{ color: T.inkSoft }}>Sin registros para este filtro en el período seleccionado.</p>;
+          return histMostrado.map((a) => (
           <div key={a.id} style={{ display: "flex", background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
             <Franja color={a.tipo === "correctiva" ? T.danger : T.ok} />
             <div style={{ padding: "10px 14px", fontSize: 13, flex: 1 }}>
@@ -2395,7 +2507,19 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
             </div>
             {onEliminar && <button title="Eliminar registro" onClick={() => onEliminar(a.id)} style={{ ...btnGhost(T.danger), alignSelf: "center", marginRight: 10, flexShrink: 0 }}>Eliminar</button>}
           </div>
-        ))}
+          ));
+        })()}
+      </section>
+
+      {/* ------- exportar (al final) ------- */}
+      <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <strong style={{ fontFamily: display, fontSize: 17, textTransform: "uppercase" }}>Exportar reporte para el informe</strong>
+          <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 2 }}>Descarga un Excel con todo el análisis: estado del mantenimiento, inventario por área y criticidad, historial, Pareto, confiabilidad, reincidentes, consumo de gas, jornadas y lecturas. Cada hoja trae filtros por columna.</div>
+        </div>
+        <button style={{ ...btn(T.ok), opacity: exportando ? 0.6 : 1 }} disabled={exportando} onClick={exportarExcel}>
+          {exportando ? "Generando…" : "⬇ Exportar a Excel"}
+        </button>
       </section>
     </div>
   );
