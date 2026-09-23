@@ -603,7 +603,7 @@ export default function TPMFMO() {
   );
   const nAlertas = alertasPrev.length + alertasTemp.length;
 
-  const tabs = [["tablero", "Tablero"], ["equipos", "Equipos"], ["atencion", "Registrar"], ["jornadas", "Jornadas"], ["aires", "Equipos instalados"], ["analisis", "Análisis"], ["guia", "Guía"]];
+  const tabs = [["tablero", "Tablero"], ["equipos", "Equipos"], ["atencion", "Registrar"], ["jornadas", "Jornadas"], ["aires", "Equipos instalados"], ["diario", "Diario"], ["analisis", "Análisis"], ["guia", "Guía"]];
 
   if (!supabase) return <PantallaMensaje titulo="Falta configurar" texto="Abre src/App.jsx y pega el Project URL y la anon key del proyecto de Supabase en las dos líneas marcadas al inicio del archivo." />;
   if (!autListo) return <PantallaMensaje titulo="TPM FMO" texto="Iniciando…" />;
@@ -687,6 +687,7 @@ export default function TPMFMO() {
         {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} onObservacion={agregarObservacion} />}
         {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} onEliminar={eliminarJornada} />}
         {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} />}
+        {tab === "diario" && <Diario equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} aires={aires} />}
         {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} onEliminar={eliminarAtencion} />}
         {tab === "guia" && <Guia onVaciar={vaciarTodo} onReal={cargarReal} />}
       </main>
@@ -710,6 +711,7 @@ function PantallaMensaje({ titulo, texto }) {
 function Login() {
   const [correo, setCorreo] = useState("");
   const [clave, setClave] = useState("");
+  const [verClave, setVerClave] = useState(false);
   const [error, setError] = useState(null);
   const [cargando, setCargando] = useState(false);
 
@@ -739,7 +741,35 @@ function Login() {
             <input style={inputStyle} type="email" autoComplete="username" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="usuario@correo.com" />
           </Field>
           <Field label="Contraseña">
-            <input style={inputStyle} type="password" autoComplete="current-password" value={clave} onChange={(e) => setClave(e.target.value)} onKeyDown={(e) => e.key === "Enter" && entrar()} />
+            <div style={{ position: "relative" }}>
+              <input
+                style={{ ...inputStyle, paddingRight: 44 }}
+                type={verClave ? "text" : "password"}
+                autoComplete="current-password"
+                value={clave}
+                onChange={(e) => setClave(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && entrar()}
+              />
+              <button
+                type="button"
+                onClick={() => setVerClave((v) => !v)}
+                title={verClave ? "Ocultar contraseña" : "Mostrar contraseña"}
+                aria-label={verClave ? "Ocultar contraseña" : "Mostrar contraseña"}
+                style={{ position: "absolute", top: 0, right: 0, height: "100%", width: 40, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: T.inkSoft, padding: 0 }}
+              >
+                {verClave ? (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                    <line x1="1" y1="1" x2="23" y2="23" />
+                  </svg>
+                ) : (
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </Field>
           {error && <p style={{ color: T.danger, fontSize: 13, margin: 0 }}>{error}</p>}
           <button style={{ ...btn(T.orange), opacity: cargando ? 0.6 : 1 }} disabled={cargando} onClick={entrar}>
@@ -1703,6 +1733,146 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar }) {
           ))
         )}
       </section>
+    </div>
+  );
+}
+
+/* ============================================================ DIARIO · qué se hizo cada día (reporte para el jefe) */
+function Diario({ equipos, atenciones, lecturas, jornadas, aires }) {
+  const [dia, setDia] = useState(hoy());
+  const fmtF = (s) => (s ? String(s).slice(0, 10).split("-").reverse().join("/") : "—");
+  const nombreEq = (id) => { const e = equipos.find((x) => x.id === id); return e ? e.nombre : "Equipo no encontrado"; };
+  const areaEq = (id) => { const e = equipos.find((x) => x.id === id); return e ? gerenciaDe(e) : ""; };
+  const mover = (n) => { const d = new Date(dia + "T00:00:00"); d.setDate(d.getDate() + n); setDia(d.toISOString().slice(0, 10)); };
+  const nombreDia = (() => { try { return new Date(dia + "T00:00:00").toLocaleDateString("es-VE", { weekday: "long", day: "numeric", month: "long", year: "numeric" }); } catch (e) { return fmtF(dia); } })();
+
+  const ese = (f) => String(f || "").slice(0, 10) === dia;
+  const preventivos = atenciones.filter((a) => a.tipo === "preventiva" && ese(a.fecha));
+  const correctivos = atenciones.filter((a) => a.tipo === "correctiva" && ese(a.fecha));
+  const lect = lecturas.filter((l) => ese(l.fecha));
+  const jorn = jornadas.filter((j) => { const ini = String(j.fechaInicio || "").slice(0, 10); const fin = String(j.fechaFin || j.fechaInicio || "").slice(0, 10); return ini && dia >= ini && dia <= fin; });
+  const instal = aires.filter((a) => ese(a.fechaMontaje));
+  const total = preventivos.length + correctivos.length + lect.length + jorn.length + instal.length;
+
+  const Tarjeta = ({ color, children }) => (
+    <div style={{ display: "flex", background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, marginBottom: 8, overflow: "hidden" }}>
+      <Franja color={color} />
+      <div style={{ padding: "10px 14px", flex: 1 }}>{children}</div>
+    </div>
+  );
+  const Grupo = ({ titulo, color, n, children }) => (n === 0 ? null : (
+    <section style={{ marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <h3 style={{ fontFamily: display, fontSize: 18, textTransform: "uppercase", letterSpacing: "0.03em", margin: 0, color: T.ink }}>{titulo}</h3>
+        <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#fff", background: color, borderRadius: 20, padding: "1px 9px" }}>{n}</span>
+      </div>
+      {children}
+    </section>
+  ));
+
+  return (
+    <div>
+      <section style={{ marginBottom: 18 }}>
+        <h2 style={h2Style}>Diario de actividades</h2>
+        <p style={{ color: T.inkSoft, fontSize: 13.5, margin: "0 0 12px", maxWidth: 640, lineHeight: 1.5 }}>
+          Escoge una fecha y verás todo lo que se hizo ese día: mantenimientos preventivos y correctivos, jornadas, lecturas de temperatura y equipos instalados. Sirve para responder al instante cuando pregunten qué se atendió un día en específico.
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <button style={btnGhost(T.steel)} onClick={() => mover(-1)}>◀ Día anterior</button>
+          <input style={{ ...inputStyle, width: "auto" }} type="date" value={dia} max={hoy()} onChange={(e) => setDia(e.target.value)} />
+          <button style={btnGhost(T.steel)} onClick={() => mover(1)} disabled={dia >= hoy()}>Día siguiente ▶</button>
+          <button style={btnGhost(T.orange)} onClick={() => setDia(hoy())}>Hoy</button>
+        </div>
+        <div style={{ marginTop: 12, padding: "10px 14px", background: T.bg, border: `1.5px solid ${T.line}`, borderRadius: 8 }}>
+          <div style={{ fontFamily: display, fontSize: 20, textTransform: "capitalize", color: T.ink }}>{nombreDia}</div>
+          <div style={{ fontFamily: mono, fontSize: 13, color: total ? T.ok : T.inkSoft, marginTop: 2 }}>
+            {total ? `${total} actividad${total === 1 ? "" : "es"} registrada${total === 1 ? "" : "s"}` : "Sin actividades registradas ese día"}
+            {total ? ` · ${preventivos.length} prev · ${correctivos.length} corr · ${jorn.length} jorn · ${lect.length} lect · ${instal.length} instal` : ""}
+          </div>
+        </div>
+      </section>
+
+      {total === 0 && (
+        <p style={{ color: T.inkSoft, fontSize: 14 }}>No hay nada registrado para esta fecha. Prueba con otro día usando las flechas o el calendario.</p>
+      )}
+
+      <Grupo titulo="Mantenimientos preventivos" color={T.ok} n={preventivos.length}>
+        {preventivos.map((a) => (
+          <Tarjeta key={a.id} color={T.ok}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+              <strong style={{ fontFamily: mono, fontSize: 14 }}>{nombreEq(a.equipoId)}</strong>
+              <span style={{ fontFamily: mono, fontSize: 12.5, color: T.inkSoft }}>{a.tecnico || "Sin técnico"}</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>{areaEq(a.equipoId)}</div>
+            {a.tareas && a.tareas.length > 0 && (
+              <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 6 }}>
+                {a.tareas.map((t, i) => (<span key={i} style={{ fontSize: 11.5, padding: "2px 8px", borderRadius: 6, background: T.bg, border: `1px solid ${T.line}`, color: T.ink }}>{t}</span>))}
+              </div>
+            )}
+            {a.kgGas > 0 && <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 5 }}>Refrigerante cargado: {a.kgGas} kg</div>}
+            {a.nota && <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 5 }}>{a.nota}</div>}
+          </Tarjeta>
+        ))}
+      </Grupo>
+
+      <Grupo titulo="Mantenimientos correctivos / fallas" color={T.danger} n={correctivos.length}>
+        {correctivos.map((a) => (
+          <Tarjeta key={a.id} color={T.danger}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+              <strong style={{ fontFamily: mono, fontSize: 14 }}>{nombreEq(a.equipoId)}</strong>
+              <span style={{ fontFamily: mono, fontSize: 12.5, color: T.inkSoft }}>{a.tecnico || "Sin técnico"}</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>{areaEq(a.equipoId)}</div>
+            {a.causa && <div style={{ fontSize: 13, color: T.danger, fontWeight: 600, marginTop: 5 }}>Causa: {a.causa}</div>}
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12.5, color: T.inkSoft, marginTop: 4 }}>
+              {a.horasFuera > 0 && <span>Horas fuera de servicio: {a.horasFuera} h</span>}
+              {a.kgGas > 0 && <span>Refrigerante: {a.kgGas} kg</span>}
+              {a.presion > 0 && <span>Presión: {a.presion} psi</span>}
+            </div>
+            {a.nota && <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 5 }}>{a.nota}</div>}
+          </Tarjeta>
+        ))}
+      </Grupo>
+
+      <Grupo titulo="Jornadas" color={T.orange} n={jorn.length}>
+        {jorn.map((j) => (
+          <Tarjeta key={j.id} color={T.orange}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+              <strong style={{ fontFamily: display, fontSize: 17, textTransform: "uppercase" }}>{j.gerencia}</strong>
+              <span style={{ fontFamily: mono, fontSize: 12.5, color: T.inkSoft }}>{j.tecnico || ""}</span>
+            </div>
+            <div style={{ fontFamily: mono, fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>
+              {j.equiposAtendidos ? `${j.equiposAtendidos} equipo${j.equiposAtendidos === 1 ? "" : "s"} · ` : ""}del {fmtF(j.fechaInicio)} al {fmtF(j.fechaFin)}
+            </div>
+            {j.nota && <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 5 }}>{j.nota}</div>}
+          </Tarjeta>
+        ))}
+      </Grupo>
+
+      <Grupo titulo="Lecturas de temperatura" color={T.steel} n={lect.length}>
+        {lect.map((l) => (
+          <Tarjeta key={l.id} color={l.fuera ? T.danger : T.steel}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+              <strong style={{ fontFamily: mono, fontSize: 14 }}>{nombreEq(l.equipoId)}</strong>
+              <span style={{ fontFamily: mono, fontSize: 14, fontWeight: 700, color: l.fuera ? T.danger : T.ok }}>{l.valor} °C{l.fuera ? " · FUERA DE RANGO" : ""}</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>{areaEq(l.equipoId)}{l.tecnico ? ` · ${l.tecnico}` : ""}</div>
+          </Tarjeta>
+        ))}
+      </Grupo>
+
+      <Grupo titulo="Equipos instalados" color={T.frio} n={instal.length}>
+        {instal.map((a) => (
+          <Tarjeta key={a.id} color={T.frio}>
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+              <strong style={{ fontFamily: mono, fontSize: 14 }}>{a.lugar}</strong>
+              <span style={{ fontFamily: mono, fontSize: 12.5, color: T.inkSoft }}>{a.tipo}{a.capacidad ? ` · ${a.capacidad}` : ""}</span>
+            </div>
+            {(a.marca || a.codigoVisco) && <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 2 }}>{a.marca}{a.codigoVisco ? ` · ${a.codigoVisco}` : ""}</div>}
+            {a.nota && <div style={{ fontSize: 12.5, color: T.inkSoft, marginTop: 5 }}>{a.nota}</div>}
+          </Tarjeta>
+        ))}
+      </Grupo>
     </div>
   );
 }
