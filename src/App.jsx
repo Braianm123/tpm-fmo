@@ -423,17 +423,36 @@ export default function TPMFMO() {
     });
   };
   const registrarAtencion = (a) => {
-    const nueva = { id: uid(), ...a };
+    const esParcial = a.tipo === "preventiva" && a.reinicia === false;
+    const nueva = { id: uid(), ...a, nota: esParcial ? ("[PARCIAL] " + (a.nota || "")).trim() : a.nota };
     setAtenciones((as) => [nueva, ...as]);
     const ops = [{ tabla: "atenciones", op: "upsert", datos: aAtencionDB(nueva, usuario.id) }];
     if (a.tipo === "preventiva") {
-      const eq = equipos.find((e) => e.id === a.equipoId);
-      if (eq) {
-        const act = { ...eq, ultimoPrev: a.fecha };
-        setEquipos((xs) => xs.map((e) => (e.id === a.equipoId ? act : e)));
-        ops.push({ tabla: "equipos", op: "upsert", datos: aEquipoDB(act, usuario.id) });
+      if (!esParcial) {
+        const eq = equipos.find((e) => e.id === a.equipoId);
+        if (eq) {
+          const act = { ...eq, ultimoPrev: a.fecha };
+          setEquipos((xs) => xs.map((e) => (e.id === a.equipoId ? act : e)));
+          ops.push({ tabla: "equipos", op: "upsert", datos: aEquipoDB(act, usuario.id) });
+        }
+        /* al hacer el preventivo COMPLETO, se cierra el pendiente de "falta completo" si existía */
+        observaciones
+          .filter((o) => o.equipoId === a.equipoId && o.estado !== "resuelta" && String(o.texto || "").indexOf("preventivo COMPLETO") >= 0)
+          .forEach((o) => {
+            const act2 = { ...o, estado: "resuelta", resuelto: new Date().toISOString() };
+            setObservaciones((xs) => xs.map((x) => (x.id === o.id ? act2 : x)));
+            ops.push({ tabla: "observaciones", op: "upsert", datos: aObservacionDB(act2, usuario.id) });
+          });
+        notificar("Preventivo registrado · semáforo reiniciado");
+      } else {
+        const tareasTxt = (a.tareas || []).join(", ");
+        const obs = { id: uid(), estado: "pendiente", creado: new Date().toISOString(), resuelto: "", equipoId: a.equipoId,
+          texto: "Falta preventivo COMPLETO (limpieza de serpentines / condensador). El " + a.fecha + " se hizo parcial" + (tareasTxt ? " (" + tareasTxt + ")" : "") + ".",
+          autor: a.tecnico || "", origen: "preventiva" };
+        setObservaciones((xs) => [obs, ...xs]);
+        ops.push({ tabla: "observaciones", op: "upsert", datos: aObservacionDB(obs, usuario.id) });
+        notificar("Preventivo parcial registrado · se dejó pendiente el preventivo completo");
       }
-      notificar("Preventivo registrado · semáforo reiniciado");
     } else notificar("Falla registrada");
     persistir(ops);
   };
@@ -828,12 +847,16 @@ function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPre
       <section>
         <h2 style={h2Style}>
           Centro de alertas
-          <Ayuda texto="Resúmen de todo lo que requiere acción. Los filtros separan lo URGENTE (90% o más del plazo de preventivo), lo PRÓXIMO (75–90%, para planificar) y las TEMPERATURAS fuera de rango. Dentro de cada filtro, las alertas se agrupan por área: toca un área para ver el detalle compacto de sus equipos." />
+          <Ayuda texto="Resúmen de todo lo que requiere acción. Los filtros separan lo URGENTE (90% o más del plazo de preventivo), lo PRÓXIMO (75–90%, para planificar), las TEMPERATURAS fuera de rango y los PENDIENTES anotados por los técnicos (tareas por hacer en un equipo). Dentro de cada filtro, todo se agrupa por área: toca un área para ver el detalle compacto y saber exactamente dónde ir." />
         </h2>
         {(() => {
           const urgentes = alertasPrev.filter((x) => x.s.nivel === "danger");
           const proximos = alertasPrev.filter((x) => x.s.nivel === "warn");
-          const total = urgentes.length + proximos.length + alertasTemp.length;
+          const pendientesList = observaciones
+            .filter((o) => o.estado !== "resuelta")
+            .map((o) => { const e = equipos.find((eq) => eq.id === o.equipoId); return e ? { tipo: "pend", e, o } : null; })
+            .filter(Boolean);
+          const total = urgentes.length + proximos.length + alertasTemp.length + pendientesList.length;
           if (!total)
             return (
               <div style={{ display: "flex", background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, overflow: "hidden" }}>
@@ -846,9 +869,11 @@ function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPre
             ["danger", "Urgentes", urgentes.length, T.danger, "#fff"],
             ["warn", "Próximos", proximos.length, T.warn, "#141414"],
             ["temp", "Temperatura", alertasTemp.length, T.orange, "#141414"],
+            ["pend", "Pendientes", pendientesList.length, T.steel, "#fff"],
           ];
           const seleccion = filtroAlerta === "danger" ? urgentes.map((x) => ({ tipo: "prev", e: x.e, s: x.s }))
             : filtroAlerta === "warn" ? proximos.map((x) => ({ tipo: "prev", e: x.e, s: x.s }))
+            : filtroAlerta === "pend" ? pendientesList
             : alertasTemp.map((x) => ({ tipo: "temp", e: x.e, l: x.l }));
 
           /* agrupar por área */
@@ -888,30 +913,38 @@ function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPre
                         style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left", fontFamily: body }}>
                         <span style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, width: 14, flexShrink: 0 }}>{abierto ? "▼" : "▶"}</span>
                         <strong style={{ fontFamily: display, fontSize: 16.5, textTransform: "uppercase", color: T.ink, flex: 1 }}>{g}</strong>
-                        <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#fff", background: filtroAlerta === "warn" ? T.warn : filtroAlerta === "temp" ? T.orange : T.danger, borderRadius: 10, padding: "1px 9px", ...(filtroAlerta !== "danger" ? { color: "#141414" } : {}) }}>{grupos[g].length}</span>
+                        <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#fff", background: filtroAlerta === "warn" ? T.warn : filtroAlerta === "temp" ? T.orange : filtroAlerta === "pend" ? T.steel : T.danger, borderRadius: 10, padding: "1px 9px", ...(filtroAlerta === "warn" || filtroAlerta === "temp" ? { color: "#141414" } : {}) }}>{grupos[g].length}</span>
                       </button>
                       {abierto && (
                         <div style={{ borderTop: `1px solid ${T.line}` }}>
-                          {grupos[g].map((it) => (
-                            <div key={it.e.id} className="fila-alerta" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.bg}`, fontSize: 13 }}>
+                          {grupos[g].map((it, idx) => (
+                            <div key={it.tipo === "pend" ? it.o.id : `${it.e.id}-${idx}`} className="fila-alerta" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.bg}`, fontSize: 13 }}>
                               <div className="fila-alerta-top" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 5, background: it.tipo === "temp" ? T.orange : it.s.color, flexShrink: 0 }} />
+                                <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 5, background: it.tipo === "temp" ? T.orange : it.tipo === "pend" ? T.steel : it.s.color, flexShrink: 0 }} />
                                 <strong style={{ fontFamily: mono, fontSize: 12.5, whiteSpace: "nowrap" }}>{it.e.nombre}</strong>
                                 <CritBadge c={it.e.criticidad} />
                                 <span className="fila-alerta-ubic" style={{ color: T.inkSoft, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.e.ubicacion}</span>
-                                {it.tipo === "prev" ? (
+                                {it.tipo === "prev" && (
                                   <span style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 700, color: it.s.color, whiteSpace: "nowrap", flexShrink: 0 }}>
                                     {it.s.dias}/{it.e.intervaloDias} d · {(it.s.uso * 100).toFixed(0)}%
                                   </span>
-                                ) : (
+                                )}
+                                {it.tipo === "temp" && (
                                   <span style={{ fontFamily: mono, fontSize: 12.5, fontWeight: 700, color: T.danger, whiteSpace: "nowrap", flexShrink: 0 }}>
                                     {fmt(+it.l.valor)} °C
                                   </span>
                                 )}
                               </div>
-                              <div className="fila-alerta-ubic-movil" style={{ color: T.inkSoft, fontSize: 12, paddingLeft: 17, marginTop: 2 }}>
-                                {it.e.ubicacion}{it.tipo === "temp" ? ` · rango ${it.e.tempMin !== "" && it.e.tempMin != null ? it.e.tempMin : "—"} a ${it.e.tempMax !== "" && it.e.tempMax != null ? it.e.tempMax : "—"} °C` : ""}
-                              </div>
+                              {it.tipo === "pend" ? (
+                                <div style={{ paddingLeft: 17, marginTop: 3, fontSize: 13, color: T.ink }}>
+                                  <span style={{ fontFamily: mono, fontSize: 10.5, fontWeight: 700, color: "#141414", background: T.warn, borderRadius: 6, padding: "1px 6px", marginRight: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>Pendiente</span>
+                                  {it.o.texto}
+                                </div>
+                              ) : (
+                                <div className="fila-alerta-ubic-movil" style={{ color: T.inkSoft, fontSize: 12, paddingLeft: 17, marginTop: 2 }}>
+                                  {it.e.ubicacion}{it.tipo === "temp" ? ` · rango ${it.e.tempMin !== "" && it.e.tempMin != null ? it.e.tempMin : "—"} a ${it.e.tempMax !== "" && it.e.tempMax != null ? it.e.tempMax : "—"} °C` : ""}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -969,7 +1002,7 @@ function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPre
               <div key={g} style={{ marginBottom: 10, border: `1.5px solid ${T.line}`, borderRadius: 8, background: T.panel, overflow: "hidden" }}>
                 <button
                   onClick={() => setAbiertas({ ...abiertas, [g]: !abiertas[g] })}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: nRojo + nTemp > 0 ? "rgba(193,39,45,0.05)" : nAmar > 0 ? "rgba(217,164,4,0.06)" : T.panel, border: "none", cursor: "pointer", textAlign: "left", fontFamily: body }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: nRojo + nTemp > 0 ? "rgba(193,39,45,0.05)" : nAmar > 0 ? "rgba(217,164,4,0.06)" : nPend > 0 ? "rgba(74,74,70,0.07)" : T.panel, border: "none", cursor: "pointer", textAlign: "left", fontFamily: body }}
                 >
                   <span style={{ fontFamily: mono, fontSize: 15, color: T.steel, width: 16, flexShrink: 0 }}>{abierta ? "▼" : "▶"}</span>
                   <strong style={{ fontFamily: display, fontSize: 19, textTransform: "uppercase", color: T.ink, flex: 1 }}>{g}</strong>
@@ -978,7 +1011,7 @@ function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPre
                     {nRojo > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#fff", background: T.danger, borderRadius: 10, padding: "1px 8px" }}>{nRojo} urgente{nRojo === 1 ? "" : "s"}</span>}
                     {nAmar > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: T.ink, background: T.warn, borderRadius: 10, padding: "1px 8px" }}>{nAmar} próximo{nAmar === 1 ? "" : "s"}</span>}
                     {nTemp > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#141414", background: T.orange, borderRadius: 10, padding: "1px 8px" }}>{nTemp} temp</span>}
-                    {nPend > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#141414", background: T.warn, borderRadius: 10, padding: "1px 8px" }}>{nPend} pend.</span>}
+                    {nPend > 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: "#fff", background: T.steel, borderRadius: 10, padding: "1px 8px" }}>{nPend} pend.</span>}
                     {nRojo + nAmar + nTemp === 0 && <span style={{ fontFamily: mono, fontSize: 12, fontWeight: 700, color: T.ok }}>al día</span>}
                   </span>
                 </button>
@@ -1325,8 +1358,8 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar,
                                 return (
                                   <div key={a.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${T.line}`, fontSize: 13 }}>
                                     <span style={{ fontFamily: mono, color: T.inkSoft, width: 82, flexShrink: 0 }}>{fmtF(a.fecha)}</span>
-                                    <span style={{ fontFamily: mono, fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 10, color: "#fff", background: a.tipo === "preventiva" ? T.ok : T.danger, flexShrink: 0 }}>
-                                      {a.tipo === "preventiva" ? "PREVENTIVO" : "FALLA"}
+                                    <span style={{ fontFamily: mono, fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 10, color: "#fff", background: a.tipo === "preventiva" ? (String(a.nota || "").indexOf("[PARCIAL]") === 0 ? T.steel : T.ok) : T.danger, flexShrink: 0 }}>
+                                      {a.tipo === "preventiva" ? (String(a.nota || "").indexOf("[PARCIAL]") === 0 ? "PREV. PARCIAL" : "PREVENTIVO") : "FALLA"}
                                     </span>
                                     <span style={{ flex: 1 }}>
                                       {a.tipo === "preventiva"
@@ -1376,6 +1409,7 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
   const [checks, setChecks] = useState({});
   const [obsPend, setObsPend] = useState("");
   const [causaOtra, setCausaOtra] = useState("");
+  const [reinicia, setReinicia] = useState(true);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   /* llegada desde la tarjeta de un equipo: lo deja seleccionado y en el modo pedido */
@@ -1413,12 +1447,14 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
       causa: esFalla ? (f.causa === "Otra" && causaOtra.trim() ? causaOtra.trim() : f.causa) : "", horasFuera: esFalla ? +f.horasFuera : 0,
       kgGas: f.kgGas === "" ? 0 : +f.kgGas, presion: f.presion === "" ? 0 : +f.presion, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
       tareas: esPrev ? tareas.filter((t) => checks[t]) : [],
+      reinicia: esPrev ? reinicia : true,
     });
     if (obsPend.trim() && onObservacion) onObservacion({ equipoId: f.equipoId, texto: obsPend.trim(), autor: f.tecnico.trim(), origen: modo });
     setObsPend("");
     setF({ ...f, causa: "", horasFuera: "", kgGas: "", presion: "", nota: "" });
     setCausaOtra("");
     setChecks({});
+    setReinicia(true);
   };
 
   if (!equipos.length) return <p style={{ color: T.inkSoft }}>Primero registra un equipo en la pestaña <strong>Equipos</strong>.</p>;
@@ -1528,6 +1564,17 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
             <p style={{ fontSize: 12, color: T.inkSoft, margin: "8px 0 0" }}>
               Marca las tareas ejecutadas. Quedan guardadas en el historial como evidencia del preventivo.
             </p>
+            <label style={{ display: "flex", gap: 10, alignItems: "flex-start", marginTop: 12, padding: "10px 12px", borderRadius: 8, background: reinicia ? "rgba(46,139,87,0.08)" : "rgba(74,74,70,0.10)", border: `1.5px solid ${reinicia ? T.ok : T.steel}`, cursor: "pointer" }}>
+              <input type="checkbox" checked={reinicia} onChange={() => setReinicia(!reinicia)} style={{ width: 18, height: 18, marginTop: 1, accentColor: T.ok, flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5 }}>
+                <strong>Reiniciar el ciclo de preventivo</strong> (mantenimiento completo).
+                <span style={{ display: "block", color: T.inkSoft, fontSize: 12.5, marginTop: 2 }}>
+                  {reinicia
+                    ? "Al guardar, el semáforo del equipo vuelve a cero."
+                    : "Preventivo PARCIAL: el semáforo NO se reinicia y se deja un pendiente \u201cFalta preventivo completo\u201d para que los demás lo vean. Se cierra solo cuando se haga el preventivo completo."}
+                </span>
+              </span>
+            </label>
           </div>
         )}
 
