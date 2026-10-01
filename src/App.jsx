@@ -2210,6 +2210,7 @@ function EstadoMantenimiento({ equipos, atenciones, lecturas, jornadas }) {
 /* ============================================================ ANÁLISIS */
 function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
   const nombre = (id) => equipos.find((e) => e.id === id)?.nombre || "—";
+  const areaEq = (id) => { const e = equipos.find((x) => x.id === id); return e ? gerenciaDe(e) : "—"; };
   const equipoDe = (id) => equipos.find((e) => e.id === id);
 
   /* ---- período de análisis ---- */
@@ -2609,7 +2610,7 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
                   <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
                     <thead>
                       <tr style={{ background: T.bg, textAlign: "left", fontFamily: mono, fontSize: 12 }}>
-                        <th style={td}>#</th><th style={td}>Equipo</th><th style={td}>Fallas</th><th style={td}>Horas fuera</th><th style={td}>MTBF</th><th style={td}>MTTR</th><th style={td}>Disp.</th><th style={td}>% acum.</th>
+                        <th style={td}>#</th><th style={td}>Equipo</th><th style={td}>Área / Gerencia</th><th style={td}>Fallas</th><th style={td}>Horas fuera</th><th style={td}>MTBF</th><th style={td}>MTTR</th><th style={td}>Disp.</th><th style={td}>% acum.</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2619,6 +2620,7 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
                           <tr key={e.id} style={{ borderBottom: `1px solid ${T.line}`, background: vital ? "rgba(193,39,45,0.04)" : "transparent" }}>
                             <td style={td}>{i + 1}</td>
                             <td style={{ ...td, fontFamily: display, textTransform: "uppercase", fontWeight: 600 }}>{nombre(e.id)}{vital && <span style={{ color: T.danger }}> ★</span>}</td>
+                            <td style={{ ...td, color: T.inkSoft }}>{areaEq(e.id)}</td>
                             <td style={{ ...td, fontWeight: 700, color: e.n > 2 ? T.danger : e.n > 1 ? T.warn : T.ink }}>{e.n}</td>
                             <td style={td}>{fmt(e.horas, 1)} h</td>
                             <td style={td}>{dDias(e.mtbfEq)}</td>
