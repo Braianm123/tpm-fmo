@@ -278,6 +278,7 @@ export default function TPMFMO() {
   const [aires, setAires] = useState([]);
   const [observaciones, setObservaciones] = useState([]);
   const [preseleccion, setPreseleccion] = useState(null); /* equipo elegido desde su tarjeta para registrar falla/preventivo */
+  const [focoEquipo, setFocoEquipo] = useState(null); /* saltar a un equipo concreto desde las alertas */
   const [tab, setTab] = useState("tablero");
   const [aviso, setAviso] = useState(null);
   const [cargado, setCargado] = useState(false);
@@ -406,6 +407,10 @@ export default function TPMFMO() {
     setEquipos((xs) => xs.map((e) => (e.id === act.id ? act : e)));
     persistir([{ tabla: "equipos", op: "upsert", datos: aEquipoDB(act, usuario.id) }]);
     notificar("Ficha del equipo actualizada");
+  };
+  const irAEquipo = (codigo) => {
+    setFocoEquipo({ codigo, ts: Date.now() });
+    setTab("equipos");
   };
   const irARegistrar = (equipoId, modo) => {
     setPreseleccion({ equipoId, modo, ts: Date.now() });
@@ -701,8 +706,8 @@ export default function TPMFMO() {
       )}
 
       <main style={{ maxWidth: 900, margin: "0 auto", padding: "20px 16px 60px" }}>
-        {tab === "tablero" && <Tablero equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
-        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} onAgregarObs={agregarObservacion} onResolverObs={resolverObservacion} onEliminarObs={eliminarObservacion} onEliminarAtencion={eliminarAtencion} />}
+        {tab === "tablero" && <Tablero equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onIrEquipo={irAEquipo} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
+        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} foco={focoEquipo} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} onAgregarObs={agregarObservacion} onResolverObs={resolverObservacion} onEliminarObs={eliminarObservacion} onEliminarAtencion={eliminarAtencion} />}
         {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} onObservacion={agregarObservacion} />}
         {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} onEliminar={eliminarJornada} />}
         {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} />}
@@ -805,7 +810,7 @@ function Login() {
 }
 
 /* ============================================================ TABLERO */
-function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPrev, alertasTemp, irA, onEjemplo, onReal }) {
+function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPrev, alertasTemp, irA, onIrEquipo, onEjemplo, onReal }) {
   const [busqueda, setBusqueda] = useState("");
   const [busquedaDif, setBusquedaDif] = useState("");
   useEffect(() => { const t = setTimeout(() => setBusquedaDif(busqueda), 200); return () => clearTimeout(t); }, [busqueda]);
@@ -918,7 +923,7 @@ function Tablero({ equipos, atenciones, lecturas, observaciones = [], alertasPre
                       {abierto && (
                         <div style={{ borderTop: `1px solid ${T.line}` }}>
                           {grupos[g].map((it, idx) => (
-                            <div key={it.tipo === "pend" ? it.o.id : `${it.e.id}-${idx}`} className="fila-alerta" style={{ padding: "8px 12px", borderBottom: `1px solid ${T.bg}`, fontSize: 13 }}>
+                            <div key={it.tipo === "pend" ? it.o.id : `${it.e.id}-${idx}`} className="fila-alerta" onClick={() => onIrEquipo && onIrEquipo(it.e.nombre)} title={`Ir a ${it.e.nombre}`} style={{ padding: "8px 12px", borderBottom: `1px solid ${T.bg}`, fontSize: 13, cursor: "pointer" }}>
                               <div className="fila-alerta-top" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                 <span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: 5, background: it.tipo === "temp" ? T.orange : it.tipo === "pend" ? T.steel : it.s.color, flexShrink: 0 }} />
                                 <strong style={{ fontFamily: mono, fontSize: 12.5, whiteSpace: "nowrap" }}>{it.e.nombre}</strong>
@@ -1113,7 +1118,7 @@ function FichaCampos({ f, set, gerenciasExistentes, idLista }) {
   );
 }
 
-function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar, onEliminar, onEditar, onRegistrar, onAgregarObs, onResolverObs, onEliminarObs, onEliminarAtencion }) {
+function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAgregar, onEliminar, onEditar, onRegistrar, onAgregarObs, onResolverObs, onEliminarObs, onEliminarAtencion }) {
   const vacio = { nombre: "", tipo: TIPOS_EQUIPO[0], gerencia: "", ubicacion: "", marcaModelo: "", serial: "", refrigerante: REFRIGERANTES[0], anio: "", capacidad: "", criticidad: "B", intervaloDias: "90", ultimoPrev: hoy(), tempMin: "", tempMax: "" };
   const [f, setF] = useState(vacio);
   const [busqueda, setBusqueda] = useState("");
@@ -1123,6 +1128,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], onAgregar,
   const [editando, setEditando] = useState(null);
   const [fe, setFe] = useState(vacio);
   const [histAbierto, setHistAbierto] = useState({});
+  useEffect(() => { if (foco && foco.codigo) { setBusqueda(foco.codigo); if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" }); } }, [foco]);
   const [obsAbierto, setObsAbierto] = useState({});
   const [obsTexto, setObsTexto] = useState({});
   const [obsAutor, setObsAutor] = useState({});
