@@ -44,6 +44,7 @@ const aEquipoDB = (e, userId) => ({
   refrigerante: e.refrigerante, anio: e.anio || "", capacidad: e.capacidad || "",
   criticidad: e.criticidad, intervalo_dias: +e.intervaloDias, ultimo_prev: e.ultimoPrev,
   temp_min: numONulo(e.tempMin), temp_max: numONulo(e.tempMax),
+  estado: e.estado || "activo", fecha_retiro: e.fechaRetiro || null, reemplazo: e.reemplazo || null,
 });
 const deEquipoDB = (r) => ({
   id: r.id, nombre: r.nombre, tipo: r.tipo, gerencia: r.gerencia, ubicacion: r.ubicacion,
@@ -52,16 +53,17 @@ const deEquipoDB = (r) => ({
   intervaloDias: +r.intervalo_dias, ultimoPrev: r.ultimo_prev,
   tempMin: r.temp_min == null ? "" : String(r.temp_min),
   tempMax: r.temp_max == null ? "" : String(r.temp_max),
+  estado: r.estado || "activo", fechaRetiro: r.fecha_retiro || "", reemplazo: r.reemplazo || "",
 });
 const aAtencionDB = (a, userId) => ({
   id: a.id, user_id: userId, equipo_id: a.equipoId, tipo: a.tipo, fecha: a.fecha,
   causa: a.causa || "", horas_fuera: +a.horasFuera || 0, kg_gas: +a.kgGas || 0, presion: +a.presion || 0,
-  tecnico: a.tecnico || "", nota: a.nota || "", tareas: a.tareas || [],
+  tecnico: a.tecnico || "", nota: a.nota || "", tareas: a.tareas || [], repuestos: a.repuestos || [],
 });
 const deAtencionDB = (r) => ({
   id: r.id, equipoId: r.equipo_id, tipo: r.tipo, fecha: r.fecha, causa: r.causa || "",
   horasFuera: +r.horas_fuera || 0, kgGas: +r.kg_gas || 0, presion: +r.presion || 0, tecnico: r.tecnico || "",
-  nota: r.nota || "", tareas: Array.isArray(r.tareas) ? r.tareas : [],
+  nota: r.nota || "", tareas: Array.isArray(r.tareas) ? r.tareas : [], repuestos: Array.isArray(r.repuestos) ? r.repuestos : [],
 });
 const aLecturaDB = (l, userId) => ({
   id: l.id, user_id: userId, equipo_id: l.equipoId, fecha: l.fecha,
@@ -106,6 +108,7 @@ const REFRIGERANTES = ["R-22", "R-410A", "R-32", "R-134a", "R-404A", "R-407C", "
 const CAUSAS_FALLA = ["Fuga de refrigerante", "Falla de compresor", "Falla eléctrica / contactor", "Serpentín sucio / obstrucción", "Ventilador / motor", "Termostato / control", "Drenaje / condensado", "Otra"];
 
 /* ---------- checklist de preventivo según tipo de equipo ---------- */
+const REPUESTOS_COMUNES = ["Capacitor / arranque", "Contactor", "Compresor", "Gas refrigerante", "Ventilador / motor", "Termostato / control", "Breaker / protección", "Tarjeta electrónica", "Filtro", "Tubería / conexión"];
 const CHECKLISTS = {
   "Split": ["Limpiar filtros de aire", "Limpiar serpentín evaporador", "Limpiar serpentín condensador", "Verificar carga de refrigerante y presiones", "Revisar conexiones eléctricas y contactor", "Medir amperaje del compresor", "Limpiar y verificar drenaje de condensado", "Verificar temperatura de suministro", "Ajuste de termostato", "Revisar anclajes, ruido y vibración"],
   "A/A ventana": ["Limpiar filtro de aire", "Limpiar serpentines evaporador y condensador", "Verificar carga de refrigerante", "Revisar conexiones eléctricas y capacitor", "Verificar y ajustar termostato y selector", "Limpiar bandeja y drenaje de condensado", "Revisar sello y montaje en la ventana", "Verificar ruido y vibración"],
@@ -279,6 +282,7 @@ export default function TPMFMO() {
   const [observaciones, setObservaciones] = useState([]);
   const [preseleccion, setPreseleccion] = useState(null); /* equipo elegido desde su tarjeta para registrar falla/preventivo */
   const [focoEquipo, setFocoEquipo] = useState(null); /* saltar a un equipo concreto desde las alertas */
+  const [editAtencion, setEditAtencion] = useState(null); /* atención que se está editando */
   const [tab, setTab] = useState("tablero");
   const [aviso, setAviso] = useState(null);
   const [cargado, setCargado] = useState(false);
@@ -408,9 +412,28 @@ export default function TPMFMO() {
     persistir([{ tabla: "equipos", op: "upsert", datos: aEquipoDB(act, usuario.id) }]);
     notificar("Ficha del equipo actualizada");
   };
+  const reemplazarEquipo = (viejoId, nuevo) => {
+    const viejo = equipos.find((e) => e.id === viejoId);
+    const nuevoEq = { id: uid(), estado: "activo", ...nuevo };
+    const viejoRet = viejo ? { ...viejo, estado: "retirado", fechaRetiro: hoy(), reemplazo: nuevoEq.nombre } : null;
+    setEquipos((xs) => [...xs.map((e) => (e.id === viejoId && viejoRet ? viejoRet : e)), nuevoEq]);
+    const ops = [{ tabla: "equipos", op: "upsert", datos: aEquipoDB(nuevoEq, usuario.id) }];
+    if (viejoRet) ops.push({ tabla: "equipos", op: "upsert", datos: aEquipoDB(viejoRet, usuario.id) });
+    persistir(ops);
+    notificar("Equipo reemplazado \u00b7 " + (viejo ? viejo.nombre : "") + " \u2192 " + nuevoEq.nombre + " (histórico conservado)");
+  };
   const irAEquipo = (codigo) => {
     setFocoEquipo({ codigo, ts: Date.now() });
     setTab("equipos");
+  };
+  const pedirEditarAtencion = (a) => { setEditAtencion({ ...a, ts: Date.now() }); setTab("atencion"); };
+  const actualizarAtencion = (a) => {
+    const base = atenciones.find((x) => x.id === a.id) || {};
+    const completo = { ...base, ...a };
+    setAtenciones((as) => as.map((x) => (x.id === a.id ? completo : x)));
+    persistir([{ tabla: "atenciones", op: "upsert", datos: aAtencionDB(completo, usuario.id) }]);
+    setEditAtencion(null);
+    notificar("Registro actualizado");
   };
   const irARegistrar = (equipoId, modo) => {
     setPreseleccion({ equipoId, modo, ts: Date.now() });
@@ -613,17 +636,18 @@ export default function TPMFMO() {
     setEquipos([]); setAtenciones([]); setLecturas([]); setJornadas([]); setAires([]); setObservaciones([]); setTab("tablero");
   };
 
+  const equiposActivos = useMemo(() => equipos.filter((e) => e.estado !== "retirado"), [equipos]);
   const alertasPrev = useMemo(
-    () => equipos.map((e) => ({ e, s: estadoEquipo(e) })).filter((x) => x.s.nivel !== "ok")
+    () => equiposActivos.map((e) => ({ e, s: estadoEquipo(e) })).filter((x) => x.s.nivel !== "ok")
       .sort((a, b) => (a.e.criticidad === b.e.criticidad ? b.s.uso - a.s.uso : a.e.criticidad.localeCompare(b.e.criticidad))),
-    [equipos]
+    [equiposActivos]
   );
   const alertasTemp = useMemo(
-    () => equipos.map((e) => {
+    () => equiposActivos.map((e) => {
       const ls = lecturas.filter((l) => l.equipoId === e.id);
       return ls.length && ls[0].fuera ? { e, l: ls[0] } : null;
     }).filter(Boolean),
-    [equipos, lecturas]
+    [equiposActivos, lecturas]
   );
   const nAlertas = alertasPrev.length + alertasTemp.length;
 
@@ -706,13 +730,13 @@ export default function TPMFMO() {
       )}
 
       <main style={{ maxWidth: 900, margin: "0 auto", padding: "20px 16px 60px" }}>
-        {tab === "tablero" && <Tablero equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onIrEquipo={irAEquipo} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
-        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} foco={focoEquipo} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} onAgregarObs={agregarObservacion} onResolverObs={resolverObservacion} onEliminarObs={eliminarObservacion} onEliminarAtencion={eliminarAtencion} />}
-        {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} onObservacion={agregarObservacion} />}
+        {tab === "tablero" && <Tablero equipos={equiposActivos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onIrEquipo={irAEquipo} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
+        {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} foco={focoEquipo} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} onAgregarObs={agregarObservacion} onResolverObs={resolverObservacion} onEliminarObs={eliminarObservacion} onEliminarAtencion={eliminarAtencion} onEditarAtencion={pedirEditarAtencion} onReemplazar={reemplazarEquipo} />}
+        {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} onObservacion={agregarObservacion} editar={editAtencion} onActualizar={actualizarAtencion} onCancelEdit={() => setEditAtencion(null)} />}
         {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} onEliminar={eliminarJornada} />}
         {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} />}
         {tab === "diario" && <Diario equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} aires={aires} />}
-        {tab === "analisis" && <Analisis equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} onEliminar={eliminarAtencion} />}
+        {tab === "analisis" && <Analisis equipos={equipos} equiposActivos={equiposActivos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} onEliminar={eliminarAtencion} onEditar={pedirEditarAtencion} />}
         {tab === "guia" && <Guia onVaciar={vaciarTodo} onReal={cargarReal} />}
       </main>
     </div>
@@ -1118,7 +1142,7 @@ function FichaCampos({ f, set, gerenciasExistentes, idLista }) {
   );
 }
 
-function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAgregar, onEliminar, onEditar, onRegistrar, onAgregarObs, onResolverObs, onEliminarObs, onEliminarAtencion }) {
+function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAgregar, onEliminar, onEditar, onRegistrar, onAgregarObs, onResolverObs, onEliminarObs, onEliminarAtencion, onEditarAtencion, onReemplazar }) {
   const vacio = { nombre: "", tipo: TIPOS_EQUIPO[0], gerencia: "", ubicacion: "", marcaModelo: "", serial: "", refrigerante: REFRIGERANTES[0], anio: "", capacidad: "", criticidad: "B", intervaloDias: "90", ultimoPrev: hoy(), tempMin: "", tempMax: "" };
   const [f, setF] = useState(vacio);
   const [busqueda, setBusqueda] = useState("");
@@ -1126,6 +1150,8 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
   useEffect(() => { const t = setTimeout(() => setBusquedaDif(busqueda), 200); return () => clearTimeout(t); }, [busqueda]);
   const [abiertas, setAbiertas] = useState({});
   const [editando, setEditando] = useState(null);
+  const [reemplazando, setReemplazando] = useState(null);
+  const [verRetirados, setVerRetirados] = useState(false);
   const [fe, setFe] = useState(vacio);
   const [histAbierto, setHistAbierto] = useState({});
   useEffect(() => { if (foco && foco.codigo) { setBusqueda(foco.codigo); if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" }); } }, [foco]);
@@ -1160,6 +1186,21 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
     onEditar({ ...limpiar(fe), id: editando });
     setEditando(null);
   };
+  const abrirReemplazo = (e) => {
+    setFe({
+      nombre: "", tipo: e.tipo || TIPOS_EQUIPO[0], gerencia: gerenciaDe(e), ubicacion: e.ubicacion || "",
+      marcaModelo: e.marcaModelo || "", serial: "", refrigerante: e.refrigerante || REFRIGERANTES[0],
+      anio: String(new Date().getFullYear()), capacidad: e.capacidad || "", criticidad: e.criticidad || "B",
+      intervaloDias: String(e.intervaloDias || 90), ultimoPrev: hoy(),
+      tempMin: e.tempMin == null ? "" : String(e.tempMin), tempMax: e.tempMax == null ? "" : String(e.tempMax),
+    });
+    setReemplazando(e.id);
+  };
+  const guardarReemplazo = () => {
+    if (!valida(fe)) return;
+    onReemplazar(reemplazando, limpiar(fe));
+    setReemplazando(null);
+  };
 
   const edad = (anio) => {
     const a = +anio;
@@ -1171,7 +1212,8 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
   const q = busquedaDif.trim().toLowerCase();
   const coincide = (e) => (e.nombre + " " + e.ubicacion + " " + e.tipo + " " + (e.serial || "") + " " + (e.marcaModelo || "")).toLowerCase().includes(q);
   const grupos = {};
-  equipos.forEach((e) => { const g = gerenciaDe(e); (grupos[g] = grupos[g] || []).push(e); });
+  equipos.filter((e) => e.estado !== "retirado").forEach((e) => { const g = gerenciaDe(e); (grupos[g] = grupos[g] || []).push(e); });
+  const retirados = equipos.filter((e) => e.estado === "retirado");
   const nombresArea = Object.keys(grupos).sort((a, b) => a.localeCompare(b));
   const visibles = nombresArea.filter((g) => !q || g.toLowerCase().includes(q) || grupos[g].some(coincide));
   const enArea = (g) => grupos[g].filter((e) => !q || g.toLowerCase().includes(q) || coincide(e));
@@ -1281,6 +1323,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
 
                         <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button style={btnGhost(T.steel)} onClick={() => abrirEdicion(e)}>Editar</button>
+                          {onReemplazar && <button style={btnGhost(T.frio)} onClick={() => abrirReemplazo(e)}>Reemplazar</button>}
                           <button style={btnGhost(T.danger)} onClick={() => onRegistrar(e.id, "correctiva")}>+ Falla</button>
                           <button style={btnGhost(T.ok)} onClick={() => onRegistrar(e.id, "preventiva")}>+ Preventivo</button>
                           <button style={{ ...btnGhost(pend.length > 0 ? T.warn : T.inkSoft) }} onClick={() => setObsAbierto({ ...obsAbierto, [e.id]: !verObs })}>
@@ -1373,8 +1416,12 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
                                         : (a.causa || "Falla") + (a.horasFuera ? ` · ${a.horasFuera} h fuera de servicio` : "")}
                                       {a.kgGas > 0 ? ` · ${a.kgGas} kg de gas` : ""}{a.presion > 0 ? ` · ${a.presion} psi` : ""}{a.tecnico ? ` · ${a.tecnico}` : ""}
                                       {a.nota && <div style={{ color: T.inkSoft }}>{a.nota}</div>}
+                                      {a.repuestos && a.repuestos.length > 0 && <div style={{ color: T.steel, fontSize: 12.5 }}>Repuestos: {a.repuestos.join(", ")}</div>}
                                     </span>
-                                    {onEliminarAtencion && <button title="Eliminar registro" onClick={() => onEliminarAtencion(a.id)} style={{ ...btnGhost(T.danger), padding: "2px 9px", flexShrink: 0 }}>×</button>}
+                                    <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                                      {onEditarAtencion && <button title="Editar registro" onClick={() => onEditarAtencion(a)} style={{ ...btnGhost(T.steel), padding: "2px 9px" }}>Editar</button>}
+                                      {onEliminarAtencion && <button title="Eliminar registro" onClick={() => onEliminarAtencion(a.id)} style={{ ...btnGhost(T.danger), padding: "2px 9px" }}>×</button>}
+                                    </div>
                                   </div>
                                 );
                               })
@@ -1391,6 +1438,41 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
           </div>
         );
       })}
+
+      {retirados.length > 0 && (
+        <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
+          <button onClick={() => setVerRetirados((v) => !v)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, background: "transparent", border: "none", cursor: "pointer", textAlign: "left", fontFamily: body, padding: 0 }}>
+            <span style={{ fontFamily: mono, fontSize: 15, color: T.steel }}>{verRetirados ? "▼" : "▶"}</span>
+            <h2 style={{ ...h2Style, margin: 0 }}>Equipos retirados ({retirados.length})</h2>
+          </button>
+          {verRetirados && (
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+              <p style={{ fontSize: 12.5, color: T.inkSoft, margin: 0 }}>Equipos dados de baja o reemplazados. Salen de las alertas y del inventario activo, pero su historial de fallas y preventivos se conserva en el Análisis.</p>
+              {retirados.map((e) => (
+                <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 10, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: "8px 12px", flexWrap: "wrap" }}>
+                  <strong style={{ fontFamily: display, fontSize: 16, textTransform: "uppercase" }}>{e.nombre}</strong>
+                  <span style={{ fontFamily: mono, fontSize: 12.5, color: T.inkSoft, flex: 1, minWidth: 160 }}>{gerenciaDe(e)} · {e.ubicacion}{e.fechaRetiro ? ` · retirado ${fmtF(e.fechaRetiro)}` : ""}{e.reemplazo ? ` · reemplazado por ${e.reemplazo}` : ""}</span>
+                  {onEliminar && <button style={btnGhost(T.danger)} onClick={() => onEliminar(e.id)}>Eliminar definitivo</button>}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {reemplazando && (
+        <div onClick={() => setReemplazando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={(ev) => ev.stopPropagation()} style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderTop: `5px solid ${T.frio}`, borderRadius: 10, padding: 18, maxWidth: 840, width: "100%", maxHeight: "90vh", overflowY: "auto" }}>
+            <h2 style={h2Style}>Reemplazar equipo</h2>
+            <p style={{ fontSize: 13, color: T.inkSoft, margin: "0 0 10px" }}>El equipo anterior pasará a <strong>retirado</strong> (sale de alertas, pero su historial se conserva) y se registrará este equipo nuevo en la misma ubicación, empezando limpio. Coloca el código y serial del equipo nuevo.</p>
+            <FichaCampos f={fe} set={setE} gerenciasExistentes={gerenciasExistentes} idLista="lista-gerencias-reemp" />
+            <div style={{ display: "flex", gap: 8, marginTop: 14, flexWrap: "wrap" }}>
+              <button style={{ ...btn(T.frio), opacity: valida(fe) ? 1 : 0.5 }} disabled={!valida(fe)} onClick={guardarReemplazo}>Confirmar reemplazo</button>
+              <button style={btnGhost(T.inkSoft)} onClick={() => setReemplazando(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {editando && (
         <div onClick={() => setEditando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
@@ -1409,26 +1491,68 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
 }
 
 /* ============================================================ REGISTRAR (atenciones + lecturas) */
-function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion }) {
+function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion, editar, onActualizar, onCancelEdit }) {
   const [modo, setModo] = useState("correctiva");
   const [f, setF] = useState({ equipoId: "", fecha: hoy(), causa: "", horasFuera: "", kgGas: "", presion: "", tecnico: "", nota: "", valor: "" });
   const [checks, setChecks] = useState({});
   const [obsPend, setObsPend] = useState("");
   const [causaOtra, setCausaOtra] = useState("");
   const [reinicia, setReinicia] = useState(true);
+  const [extras, setExtras] = useState([]); /* tareas/chequeos propios añadidos a mano */
+  const [extraTxt, setExtraTxt] = useState("");
+  const [editId, setEditId] = useState(null);
+  const [repSel, setRepSel] = useState({});
+  const [repCustom, setRepCustom] = useState([]);
+  const [repTxt, setRepTxt] = useState("");
+  const toggleRep = (r) => setRepSel((st) => ({ ...st, [r]: !st[r] }));
+  const addRepCustom = () => { const t = repTxt.trim(); if (!t) return; setRepCustom((xs) => [...xs, t]); setRepTxt(""); };
+  const delRepCustom = (i) => setRepCustom((xs) => xs.filter((_, k) => k !== i));
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const addExtra = () => { const t = extraTxt.trim(); if (!t) return; setExtras((xs) => [...xs, { texto: t, hecho: true }]); setExtraTxt(""); };
+  const toggleExtra = (i) => setExtras((xs) => xs.map((x, k) => (k === i ? { ...x, hecho: !x.hecho } : x)));
+  const delExtra = (i) => setExtras((xs) => xs.filter((_, k) => k !== i));
 
   /* llegada desde la tarjeta de un equipo: lo deja seleccionado y en el modo pedido */
   useEffect(() => {
     if (!preseleccion) return;
     if (preseleccion.modo) setModo(preseleccion.modo);
     setF((p) => ({ ...p, equipoId: preseleccion.equipoId || "" }));
-    setChecks({});
+    setChecks({}); setExtras([]); setRepSel({}); setRepCustom([]);
   }, [preseleccion]);
+
+  useEffect(() => {
+    if (!editar) return;
+    const esPrevE = editar.tipo === "preventiva";
+    setModo(esPrevE ? "preventiva" : "correctiva");
+    const causaEnLista = CAUSAS_FALLA.includes(editar.causa);
+    const notaLimpia = String(editar.nota || "").replace(/^\[PARCIAL\]\s*/, "");
+    setF({
+      equipoId: editar.equipoId || "", fecha: String(editar.fecha || hoy()).slice(0, 10),
+      causa: esPrevE ? "" : (causaEnLista ? editar.causa : (editar.causa ? "Otra" : "")),
+      horasFuera: esPrevE ? "" : String(editar.horasFuera ?? ""),
+      kgGas: editar.kgGas ? String(editar.kgGas) : "", presion: editar.presion ? String(editar.presion) : "",
+      tecnico: editar.tecnico || "", nota: notaLimpia, valor: "",
+    });
+    setCausaOtra(!esPrevE && !causaEnLista && editar.causa ? editar.causa : "");
+    const eqE = equipos.find((x) => x.id === editar.equipoId);
+    const predef = eqE ? (CHECKLISTS[eqE.tipo] || CHECKLISTS["Otro"]) : [];
+    const ch = {}; const ex = [];
+    (editar.tareas || []).forEach((t) => { if (predef.includes(t)) ch[t] = true; else ex.push({ texto: t, hecho: true }); });
+    setChecks(ch); setExtras(ex); setExtraTxt("");
+    const rs = {}; const rc = [];
+    (editar.repuestos || []).forEach((r) => { if (REPUESTOS_COMUNES.includes(r)) rs[r] = true; else rc.push(r); });
+    setRepSel(rs); setRepCustom(rc); setRepTxt("");
+    setReinicia(String(editar.nota || "").indexOf("[PARCIAL]") !== 0);
+    setObsPend("");
+    setEditId(editar.id);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [editar]);
 
   const eq = equipos.find((x) => x.id === f.equipoId);
   const tareas = eq ? (CHECKLISTS[eq.tipo] || CHECKLISTS["Otro"]) : [];
   const nHechas = tareas.filter((t) => checks[t]).length;
+  const extrasHechas = extras.filter((x) => x.hecho).length;
+  const repuestosSel = [...REPUESTOS_COMUNES.filter((r) => repSel[r]), ...repCustom];
 
   const esFalla = modo === "correctiva";
   const esPrev = modo === "preventiva";
@@ -1436,7 +1560,7 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
 
   const listo = f.equipoId && f.fecha && (
     (esFalla && f.causa && f.horasFuera !== "") ||
-    (esPrev && nHechas > 0) ||
+    (esPrev && (nHechas + extrasHechas) > 0) ||
     (esLectura && f.valor !== "")
   );
 
@@ -1448,12 +1572,29 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
       setF({ ...f, valor: "" });
       return;
     }
+    if (editId) {
+      const notaFinal = (esPrev && !reinicia) ? ("[PARCIAL] " + f.nota.trim()).trim() : f.nota.trim();
+      onActualizar({
+        id: editId, equipoId: f.equipoId, tipo: modo, fecha: f.fecha,
+        causa: esFalla ? (f.causa === "Otra" && causaOtra.trim() ? causaOtra.trim() : f.causa) : "",
+        horasFuera: esFalla ? +f.horasFuera : 0,
+        kgGas: f.kgGas === "" ? 0 : +f.kgGas, presion: f.presion === "" ? 0 : +f.presion,
+        tecnico: f.tecnico.trim(), nota: notaFinal,
+        tareas: esPrev ? [...tareas.filter((t) => checks[t]), ...extras.filter((x) => x.hecho).map((x) => x.texto)] : [],
+        repuestos: (esFalla || esPrev) ? repuestosSel : [],
+      });
+      setEditId(null);
+      setF({ ...f, causa: "", horasFuera: "", kgGas: "", presion: "", nota: "" });
+      setCausaOtra(""); setChecks({}); setReinicia(true); setExtras([]); setExtraTxt(""); setObsPend(""); setRepSel({}); setRepCustom([]); setRepTxt("");
+      return;
+    }
     onAtencion({
       equipoId: f.equipoId, tipo: modo, fecha: f.fecha,
       causa: esFalla ? (f.causa === "Otra" && causaOtra.trim() ? causaOtra.trim() : f.causa) : "", horasFuera: esFalla ? +f.horasFuera : 0,
       kgGas: f.kgGas === "" ? 0 : +f.kgGas, presion: f.presion === "" ? 0 : +f.presion, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
-      tareas: esPrev ? tareas.filter((t) => checks[t]) : [],
+      tareas: esPrev ? [...tareas.filter((t) => checks[t]), ...extras.filter((x) => x.hecho).map((x) => x.texto)] : [],
       reinicia: esPrev ? reinicia : true,
+      repuestos: (esFalla || esPrev) ? repuestosSel : [],
     });
     if (obsPend.trim() && onObservacion) onObservacion({ equipoId: f.equipoId, texto: obsPend.trim(), autor: f.tecnico.trim(), origen: modo });
     setObsPend("");
@@ -1461,6 +1602,9 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
     setCausaOtra("");
     setChecks({});
     setReinicia(true);
+    setExtras([]);
+    setExtraTxt("");
+    setRepSel({}); setRepCustom([]); setRepTxt("");
   };
 
   if (!equipos.length) return <p style={{ color: T.inkSoft }}>Primero registra un equipo en la pestaña <strong>Equipos</strong>.</p>;
@@ -1479,6 +1623,7 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
       </div>
 
       <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
+        {editId && <div style={{ background: "rgba(74,74,70,0.10)", border: `1.5px solid ${T.steel}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 13 }}>✎ Editando un registro existente. Corrige los datos y pulsa <strong>Guardar cambios</strong>.</div>}
         <h2 style={h2Style}>
           {esFalla ? "Registrar falla atendida" : esPrev ? "Registrar preventivo ejecutado" : "Registrar lectura de temperatura"}
           <Ayuda texto={esFalla
@@ -1489,7 +1634,7 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
         </h2>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
           <Field label="Equipo" ancho={220}>
-            <select style={inputStyle} value={f.equipoId} onChange={(e) => { setF({ ...f, equipoId: e.target.value }); setChecks({}); }}>
+            <select style={inputStyle} value={f.equipoId} onChange={(e) => { setF({ ...f, equipoId: e.target.value }); setChecks({}); setExtras([]); setRepSel({}); setRepCustom([]); }}>
               <option value="">Selecciona…</option>
               {equipos.map((e) => <option key={e.id} value={e.id}>{e.nombre} · {gerenciaDe(e)} · {e.ubicacion}</option>)}
             </select>
@@ -1558,7 +1703,7 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
                 Checklist · {eq.tipo}
               </strong>
               <span style={{ fontFamily: mono, fontSize: 13, color: nHechas === tareas.length ? T.ok : T.inkSoft }}>
-                {nHechas} / {tareas.length} tareas
+                {nHechas} / {tareas.length}{extras.length ? ` (+${extrasHechas} extra)` : ""} tareas
               </span>
             </div>
             {tareas.map((t) => (
@@ -1567,8 +1712,19 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
                 <span style={{ color: checks[t] ? T.ink : T.inkSoft, textDecoration: checks[t] ? "none" : "none" }}>{t}</span>
               </label>
             ))}
+            {extras.map((x, i) => (
+              <div key={`ex-${i}`} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${T.line}`, fontSize: 14 }}>
+                <input type="checkbox" checked={x.hecho} onChange={() => toggleExtra(i)} style={{ width: 17, height: 17, marginTop: 2, accentColor: T.ok, flexShrink: 0 }} />
+                <span style={{ color: x.hecho ? T.ink : T.inkSoft, flex: 1 }}>{x.texto}</span>
+                <button type="button" onClick={() => delExtra(i)} title="Quitar" style={{ background: "none", border: "none", cursor: "pointer", color: T.danger, fontSize: 18, lineHeight: 1, padding: "0 4px", flexShrink: 0 }}>×</button>
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <input value={extraTxt} onChange={(e) => setExtraTxt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addExtra(); } }} placeholder="Otra tarea o chequeo (ej: equipo encontrado apagado, se ajustó a 22 °C)" style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
+              <button type="button" onClick={addExtra} disabled={!extraTxt.trim()} style={{ ...btnGhost(T.ok), opacity: extraTxt.trim() ? 1 : 0.5 }}>+ Añadir</button>
+            </div>
             <p style={{ fontSize: 12, color: T.inkSoft, margin: "8px 0 0" }}>
-              Marca las tareas ejecutadas. Quedan guardadas en el historial como evidencia del preventivo.
+              Marca las tareas ejecutadas o añade las tuyas con “+ Añadir” (para inspecciones o chequeos fuera de la lista). Quedan en el historial como evidencia.
             </p>
             <label style={{ display: "flex", gap: 10, alignItems: "flex-start", marginTop: 12, padding: "10px 12px", borderRadius: 8, background: reinicia ? "rgba(46,139,87,0.08)" : "rgba(74,74,70,0.10)", border: `1.5px solid ${reinicia ? T.ok : T.steel}`, cursor: "pointer" }}>
               <input type="checkbox" checked={reinicia} onChange={() => setReinicia(!reinicia)} style={{ width: 18, height: 18, marginTop: 1, accentColor: T.ok, flexShrink: 0 }} />
@@ -1592,9 +1748,45 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
           </p>
         )}
 
-        <button style={{ ...btn(T.orange), marginTop: 14, opacity: listo ? 1 : 0.5 }} disabled={!listo} onClick={guardar}>
-          Guardar registro
-        </button>
+        {(esFalla || esPrev) && eq && (
+          <div style={{ marginTop: 14, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 14, background: "#FAFBFC" }}>
+            <strong style={{ fontFamily: display, fontSize: 16, textTransform: "uppercase" }}>Repuestos utilizados <span style={{ fontFamily: mono, fontSize: 12, color: T.inkSoft, textTransform: "none" }}>(opcional)</span></strong>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 14px", marginTop: 8 }}>
+              {REPUESTOS_COMUNES.map((r) => (
+                <label key={r} style={{ display: "flex", gap: 7, alignItems: "center", cursor: "pointer", fontSize: 13.5, width: "calc(50% - 14px)", minWidth: 180, padding: "3px 0" }}>
+                  <input type="checkbox" checked={!!repSel[r]} onChange={() => toggleRep(r)} style={{ width: 16, height: 16, accentColor: T.steel, flexShrink: 0 }} />
+                  <span style={{ color: repSel[r] ? T.ink : T.inkSoft }}>{r}</span>
+                </label>
+              ))}
+            </div>
+            {repCustom.map((r, i) => (
+              <div key={`rc-${i}`} style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6, fontSize: 13.5 }}>
+                <span style={{ color: T.steel, fontWeight: 700 }}>•</span>
+                <span style={{ flex: 1 }}>{r}</span>
+                <button type="button" onClick={() => delRepCustom(i)} title="Quitar" style={{ background: "none", border: "none", cursor: "pointer", color: T.danger, fontSize: 18, lineHeight: 1 }}>×</button>
+              </div>
+            ))}
+            <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+              <input value={repTxt} onChange={(e) => setRepTxt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRepCustom(); } }} placeholder="Otro repuesto (ej: válvula de expansión)" style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
+              <button type="button" onClick={addRepCustom} disabled={!repTxt.trim()} style={{ ...btnGhost(T.steel), opacity: repTxt.trim() ? 1 : 0.5 }}>+ Añadir</button>
+            </div>
+            <p style={{ fontSize: 12, color: T.inkSoft, margin: "8px 0 0" }}>Marca los repuestos usados o añade otros. Queda en el historial para control de inventario.</p>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap", alignItems: "center" }}>
+          <button style={{ ...btn(editId ? T.steel : T.orange), opacity: listo ? 1 : 0.5 }} disabled={!listo} onClick={guardar}>
+            {editId ? "Guardar cambios" : "Guardar registro"}
+          </button>
+          {editId && (
+            <button style={btnGhost(T.inkSoft)} onClick={() => {
+              setEditId(null);
+              setF({ ...f, causa: "", horasFuera: "", kgGas: "", presion: "", nota: "" });
+              setCausaOtra(""); setChecks({}); setReinicia(true); setExtras([]); setExtraTxt(""); setObsPend(""); setRepSel({}); setRepCustom([]); setRepTxt("");
+              if (onCancelEdit) onCancelEdit();
+            }}>Cancelar edición</button>
+          )}
+        </div>
       </section>
     </div>
   );
@@ -2208,7 +2400,8 @@ function EstadoMantenimiento({ equipos, atenciones, lecturas, jornadas }) {
 }
 
 /* ============================================================ ANÁLISIS */
-function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
+function Analisis({ equipos, equiposActivos, atenciones, lecturas, jornadas, onEliminar, onEditar }) {
+  const eqAct = equiposActivos || equipos;
   const nombre = (id) => equipos.find((e) => e.id === id)?.nombre || "—";
   const areaEq = (id) => { const e = equipos.find((x) => x.id === id); return e ? gerenciaDe(e) : "—"; };
   const equipoDe = (id) => equipos.find((e) => e.id === id);
@@ -2348,8 +2541,8 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
       const crit = { A: 0, B: 0, C: 0 };
       equipos.forEach((e) => { crit[e.criticidad] = (crit[e.criticidad] || 0) + 1; });
 
-      const inv = equipos.slice().sort((a, b) => gerenciaDe(a).localeCompare(gerenciaDe(b)) || String(a.nombre).localeCompare(String(b.nombre))).map((e) => ({ "Área/Gerencia": gerenciaDe(e), "Código": e.nombre, "Ubicación": e.ubicacion, "Tipo": e.tipo, "Capacidad": e.capacidad, "Serial": e.serial, "Refrigerante": e.refrigerante, "Criticidad": e.criticidad, "Frecuencia (días)": e.intervaloDias, "Último preventivo": e.ultimoPrev, "Temp mín": e.tempMin, "Temp máx": e.tempMax }));
-      const hist = atenciones.slice().sort((a, b) => areaDe(a.equipoId).localeCompare(areaDe(b.equipoId)) || String(b.fecha).localeCompare(String(a.fecha))).map((a) => ({ "Fecha": a.fecha, "Área": areaDe(a.equipoId), "Equipo": nombre(a.equipoId), "Tipo": a.tipo === "preventiva" ? "Preventivo" : "Falla", "Causa": a.causa, "Horas fuera": a.horasFuera, "Kg gas": a.kgGas, "Presión (psi)": a.presion || "", "Técnico": a.tecnico, "Nota": a.nota, "Tareas del checklist": (a.tareas || []).join(" · ") }));
+      const inv = eqAct.slice().sort((a, b) => gerenciaDe(a).localeCompare(gerenciaDe(b)) || String(a.nombre).localeCompare(String(b.nombre))).map((e) => ({ "Área/Gerencia": gerenciaDe(e), "Código": e.nombre, "Ubicación": e.ubicacion, "Tipo": e.tipo, "Capacidad": e.capacidad, "Serial": e.serial, "Refrigerante": e.refrigerante, "Criticidad": e.criticidad, "Frecuencia (días)": e.intervaloDias, "Último preventivo": e.ultimoPrev, "Temp mín": e.tempMin, "Temp máx": e.tempMax }));
+      const hist = atenciones.slice().sort((a, b) => areaDe(a.equipoId).localeCompare(areaDe(b.equipoId)) || String(b.fecha).localeCompare(String(a.fecha))).map((a) => ({ "Fecha": a.fecha, "Área": areaDe(a.equipoId), "Equipo": nombre(a.equipoId), "Tipo": a.tipo === "preventiva" ? "Preventivo" : "Falla", "Causa": a.causa, "Horas fuera": a.horasFuera, "Kg gas": a.kgGas, "Presión (psi)": a.presion || "", "Técnico": a.tecnico, "Nota": a.nota, "Tareas del checklist": (a.tareas || []).join(" · "), "Repuestos": (a.repuestos || []).join(" · ") }));
       const resumen = [
         { "Indicador": "Total de equipos", "Valor": nEq },
         { "Indicador": "Criticidad A", "Valor": crit.A || 0 },
@@ -2476,7 +2669,7 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <EstadoMantenimiento equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />
+      <EstadoMantenimiento equipos={eqAct} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} />
 
       {/* ------- resumen ejecutivo ------- */}
       <section>
@@ -2729,8 +2922,12 @@ function Analisis({ equipos, atenciones, lecturas, jornadas, onEliminar }) {
                 <div style={{ color: T.inkSoft, marginTop: 3 }}>✓ {a.tareas.length} tarea{a.tareas.length === 1 ? "" : "s"} del checklist: {a.tareas.join(" · ")}</div>
               )}
               {a.nota && <div style={{ color: T.inkSoft }}>{a.nota}</div>}
+              {a.repuestos && a.repuestos.length > 0 && <div style={{ color: T.steel }}>Repuestos: {a.repuestos.join(", ")}</div>}
             </div>
-            {onEliminar && <button title="Eliminar registro" onClick={() => onEliminar(a.id)} style={{ ...btnGhost(T.danger), alignSelf: "center", marginRight: 10, flexShrink: 0 }}>Eliminar</button>}
+            <div style={{ display: "flex", gap: 6, alignSelf: "center", marginRight: 10, flexShrink: 0 }}>
+              {onEditar && <button title="Editar registro" onClick={() => onEditar(a)} style={{ ...btnGhost(T.steel) }}>Editar</button>}
+              {onEliminar && <button title="Eliminar registro" onClick={() => onEliminar(a.id)} style={{ ...btnGhost(T.danger) }}>Eliminar</button>}
+            </div>
           </div>
           ));
         })()}
