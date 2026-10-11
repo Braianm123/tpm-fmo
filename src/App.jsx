@@ -1884,11 +1884,11 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar }) {
                 <button style={btnGhost(T.inkSoft)} onClick={marcarNinguno}>Ninguno</button>
               </span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 4, marginTop: 8, maxHeight: 240, overflowY: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 4, marginTop: 8, maxHeight: 300, overflowY: "auto" }}>
               {equiposDelArea.map((e) => (
-                <label key={e.id} style={{ display: "flex", gap: 8, alignItems: "center", padding: "4px 6px", borderRadius: 6, cursor: "pointer", fontSize: 13, background: sel[e.id] ? "rgba(46,125,50,0.08)" : "transparent" }}>
-                  <input type="checkbox" checked={!!sel[e.id]} onChange={() => toggleEq(e.id)} style={{ width: 16, height: 16, accentColor: T.ok, flexShrink: 0 }} />
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><strong style={{ fontFamily: mono }}>{e.nombre}</strong> · {e.ubicacion}</span>
+                <label key={e.id} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "5px 6px", borderRadius: 6, cursor: "pointer", fontSize: 13, background: sel[e.id] ? "rgba(46,125,50,0.08)" : "transparent" }}>
+                  <input type="checkbox" checked={!!sel[e.id]} onChange={() => toggleEq(e.id)} style={{ width: 16, height: 16, accentColor: T.ok, flexShrink: 0, marginTop: 2 }} />
+                  <span style={{ lineHeight: 1.35 }}><strong style={{ fontFamily: mono }}>{e.nombre}</strong> · {e.ubicacion}</span>
                 </label>
               ))}
             </div>
@@ -2477,6 +2477,18 @@ function Analisis({ equipos, equiposActivos, atenciones, lecturas, jornadas, onE
     return Object.entries(acc).sort((a, b) => b[1] - a[1]);
   }, [consumoGas, equipos]);
   const sospechososFuga = consumoGas.filter((c) => c.recargas >= 2);
+  const consumoRepuestos = useMemo(() => {
+    const acc = {};
+    atFiltradas.forEach((a) => (a.repuestos || []).forEach((r) => {
+      const k = String(r).trim(); if (!k) return;
+      if (!acc[k]) acc[k] = { n: 0, equipos: new Set(), ultima: "" };
+      acc[k].n += 1; acc[k].equipos.add(a.equipoId);
+      if (!acc[k].ultima || String(a.fecha) > acc[k].ultima) acc[k].ultima = a.fecha;
+    }));
+    return Object.entries(acc).map(([r, v]) => ({ repuesto: r, n: v.n, equipos: v.equipos.size, ultima: v.ultima })).sort((a, b) => b.n - a.n);
+  }, [atFiltradas]);
+  const totalRepuestos = consumoRepuestos.reduce((s, x) => s + x.n, 0);
+  const maxRep = consumoRepuestos.length ? consumoRepuestos[0].n : 0;
 
   /* ---- confiabilidad (MTBF, MTTR, disponibilidad, tasa de fallas) · operación 24 h/día ---- */
   const confia = useMemo(() => {
@@ -2569,6 +2581,7 @@ function Analisis({ equipos, equiposActivos, atenciones, lecturas, jornadas, onE
       const gAcc = {};
       atenciones.forEach((a) => { if ((+a.kgGas || 0) > 0) { if (!gAcc[a.equipoId]) gAcc[a.equipoId] = { kg: 0, r: 0 }; gAcc[a.equipoId].kg += +a.kgGas; gAcc[a.equipoId].r++; } });
       const gas = Object.entries(gAcc).sort((a, b) => areaDe(a[0]).localeCompare(areaDe(b[0])) || b[1].kg - a[1].kg).map(([id, v]) => ({ "Equipo": nombre(id), "Área": areaDe(id), "Kg totales": +v.kg.toFixed(2), "N° recargas": v.r, "¿Sospechoso de fuga?": v.r >= 2 ? "Sí" : "No" }));
+      const repInv = consumoRepuestos.map((x) => ({ "Repuesto": x.repuesto, "Veces usado": x.n, "N° de equipos": x.equipos, "Último uso": x.ultima }));
 
       /* --- estado del mantenimiento (cumplimiento del plan) --- */
       const hoyMs = Date.now();
@@ -2630,6 +2643,7 @@ function Analisis({ equipos, equiposActivos, atenciones, lecturas, jornadas, onE
       add(confiab, "Confiabilidad");
       add(reinc, "Equipos reincidentes");
       add(gas, "Consumo refrigerante");
+      add(repInv, "Repuestos utilizados");
       add(jorn, "Jornadas");
       add(lect, "Lecturas temperatura");
       XLSX.writeFile(wb, "TPM_FMO_reporte_" + hoy() + ".xlsx");
@@ -2887,6 +2901,41 @@ function Analisis({ equipos, equiposActivos, atenciones, lecturas, jornadas, onE
               </p>
             </div>
           )}
+        </section>
+      )}
+
+      {/* ------- control de repuestos ------- */}
+      {consumoRepuestos.length > 0 && (
+        <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
+          <h2 style={h2Style}>
+            Control de repuestos
+            <Ayuda texto="Consumo acumulado de repuestos en los mantenimientos del período (preventivos y correctivos). Incluye todos los registros donde marcaste o añadiste repuestos. Sirve para saber qué piezas se gastan más y planificar las compras y el stock del almacén." />
+          </h2>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: T.bg, textAlign: "left", fontFamily: mono, fontSize: 12 }}>
+                  <th style={td}>Repuesto</th><th style={td}>Veces usado</th><th style={td}>N° equipos</th><th style={td}>Último uso</th><th style={td}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {consumoRepuestos.map((r) => (
+                  <tr key={r.repuesto} style={{ borderBottom: `1px solid ${T.line}` }}>
+                    <td style={{ ...td, fontWeight: 600 }}>{r.repuesto}</td>
+                    <td style={{ ...td, fontFamily: mono, fontWeight: 700 }}>{r.n}</td>
+                    <td style={{ ...td, fontFamily: mono }}>{r.equipos}</td>
+                    <td style={{ ...td, fontFamily: mono, color: T.inkSoft }}>{r.ultima ? String(r.ultima).slice(0, 10).split("-").reverse().join("/") : "—"}</td>
+                    <td style={{ ...td, width: "38%" }}>
+                      <div style={{ height: 12, background: T.bg, borderRadius: 4, border: `1px solid ${T.line}` }}>
+                        <div style={{ height: "100%", width: `${maxRep ? (r.n / maxRep) * 100 : 0}%`, background: T.steel, borderRadius: 4, minWidth: 2 }} />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p style={{ fontSize: 12, color: T.inkSoft, margin: "8px 0 0" }}>Total de repuestos utilizados en el período: <strong>{totalRepuestos}</strong>. Insumo directo para el control de inventario y la planificación de compras del almacén.</p>
         </section>
       )}
 
