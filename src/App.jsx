@@ -1857,13 +1857,21 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar, onActualizar }) 
     return {
       tipo: Object.entries(dt).map(([tipo, n]) => ({ tipo, n })),
       cap: Object.entries(dc).map(([capacidad, n]) => ({ capacidad, n })).sort((a, b) => b.n - a.n),
+      ids: lista.map((e) => e.id),
     };
   };
 
   const cargarParaEditar = (j) => {
     setEditId(j.id);
     setF({ gerencia: j.gerencia, fechaInicio: j.fechaInicio, fechaFin: j.fechaFin || j.fechaInicio, tecnico: j.tecnico || "", nota: j.nota || "" });
-    setSel({}); setChecks({}); setFotos([]);
+    /* pre-marcar los equipos de la jornada: por ids guardados; si es antigua sin ids, por fecha del último preventivo */
+    let ids = (j.desglose && !Array.isArray(j.desglose) && j.desglose.ids) || j.equiposIds || null;
+    if (!ids || !ids.length) {
+      const fj = j.fechaFin || j.fechaInicio;
+      ids = equipos.filter((e) => gerenciaDe(e) === j.gerencia && e.ultimoPrev === fj).map((e) => e.id);
+    }
+    const selInit = {}; (ids || []).forEach((id) => { selInit[id] = true; });
+    setSel(selInit); setChecks({}); setFotos([]);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   };
   const cancelarEdicion = () => { setEditId(null); setSel({}); setChecks({}); setF({ gerencia: "", fechaInicio: hoy(), fechaFin: hoy(), tecnico: "", nota: "" }); };
@@ -1906,7 +1914,7 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar, onActualizar }) 
         </h2>
         {editId && (
           <div style={{ marginTop: 10, padding: "8px 12px", background: "#FFF7E0", border: `1.5px solid ${T.orange}`, borderRadius: 8, fontFamily: mono, fontSize: 13 }}>
-            Editando la jornada de <strong>{editando ? editando.gerencia : ""}</strong>. Cambia las fechas u otros datos y pulsa «Actualizar jornada». Deja los equipos sin marcar para conservar los actuales.
+            Editando la jornada de <strong>{editando ? editando.gerencia : ""}</strong>. Los equipos aparecen marcados como se registraron; quita o agrega los que necesites y pulsa «Actualizar jornada».
           </div>
         )}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
