@@ -79,7 +79,7 @@ const aJornadaDB = (j, userId) => ({
 const deJornadaDB = (r) => ({
   id: r.id, gerencia: r.gerencia, fechaInicio: r.fecha_inicio, fechaFin: r.fecha_fin,
   equiposAtendidos: +r.equipos_atendidos || 0, tecnico: r.tecnico || "", nota: r.nota || "",
-  desglose: Array.isArray(r.desglose) ? r.desglose : [],
+  desglose: r.desglose || [],
 });
 /* aires montados (instalaciones nuevas, inventario VISCO) */
 const aAireDB = (a, userId) => ({
@@ -602,6 +602,15 @@ export default function TPMFMO() {
       }
     );
   };
+  const actualizarJornada = (id, data) => {
+    const jo = jornadas.find((x) => x.id === id);
+    if (!jo) return;
+    const actualizada = { ...jo, ...data };
+    setJornadas((js) => js.map((j) => (j.id === id ? actualizada : j)));
+    /* solo actualiza el registro de la jornada; no se regeneran preventivos ni se tocan equipos -> el análisis queda intacto */
+    persistir([{ tabla: "jornadas", op: "upsert", datos: aJornadaDB(actualizada, usuario.id) }]);
+    notificar("Jornada actualizada");
+  };
 
   /* ---- aires montados (instalaciones nuevas) ---- */
   const registrarAire = (a) => {
@@ -617,6 +626,14 @@ export default function TPMFMO() {
       persistir([{ tabla: "aires_montados", op: "delete", id }]);
       notificar("Equipo instalado eliminado");
     });
+  };
+  const actualizarAire = (id, data) => {
+    const a = aires.find((x) => x.id === id);
+    if (!a) return;
+    const act = { ...a, ...data };
+    setAires((xs) => xs.map((x) => (x.id === id ? act : x)));
+    persistir([{ tabla: "aires_montados", op: "upsert", datos: aAireDB(act, usuario.id) }]);
+    notificar("Equipo instalado actualizado");
   };
   const aireAlPlan = (a) => {
     pedirConfirmacion(`¿Agregar "${a.lugar}" al inventario de mantenimiento preventivo? Se creará su ficha con preventivo cada 90 días.`, () => {
@@ -733,8 +750,8 @@ export default function TPMFMO() {
         {tab === "tablero" && <Tablero equipos={equiposActivos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} alertasPrev={alertasPrev} alertasTemp={alertasTemp} irA={setTab} onIrEquipo={irAEquipo} onEjemplo={cargarEjemplo} onReal={cargarReal} />}
         {tab === "equipos" && <Equipos equipos={equipos} atenciones={atenciones} lecturas={lecturas} observaciones={observaciones} foco={focoEquipo} onAgregar={agregarEquipo} onEliminar={eliminarEquipo} onEditar={editarEquipo} onRegistrar={irARegistrar} onAgregarObs={agregarObservacion} onResolverObs={resolverObservacion} onEliminarObs={eliminarObservacion} onEliminarAtencion={eliminarAtencion} onEditarAtencion={pedirEditarAtencion} onReemplazar={reemplazarEquipo} />}
         {tab === "atencion" && <Registrar equipos={equipos} onAtencion={registrarAtencion} onLectura={registrarLectura} preseleccion={preseleccion} onObservacion={agregarObservacion} editar={editAtencion} onActualizar={actualizarAtencion} onCancelEdit={() => setEditAtencion(null)} />}
-        {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} onEliminar={eliminarJornada} />}
-        {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} />}
+        {tab === "jornadas" && <Jornadas equipos={equipos} jornadas={jornadas} onRegistrar={registrarJornada} onEliminar={eliminarJornada} onActualizar={actualizarJornada} />}
+        {tab === "aires" && <AiresMontados aires={aires} onRegistrar={registrarAire} onEliminar={eliminarAire} onAlPlan={aireAlPlan} onActualizar={actualizarAire} />}
         {tab === "diario" && <Diario equipos={equipos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} aires={aires} />}
         {tab === "analisis" && <Analisis equipos={equipos} equiposActivos={equiposActivos} atenciones={atenciones} lecturas={lecturas} jornadas={jornadas} onEliminar={eliminarAtencion} onEditar={pedirEditarAtencion} />}
         {tab === "guia" && <Guia onVaciar={vaciarTodo} onReal={cargarReal} />}
@@ -1793,13 +1810,14 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
 }
 
 /* ============================================================ JORNADAS DE MANTENIMIENTO POR ÁREA */
-function Jornadas({ equipos, jornadas, onRegistrar, onEliminar }) {
+function Jornadas({ equipos, jornadas, onRegistrar, onEliminar, onActualizar }) {
   const JORNADA_CHECKLIST = ["Limpieza de filtros de aire", "Limpieza de serpentines (evaporador y condensador)", "Verificación de carga de refrigerante y presiones", "Revisión de conexiones eléctricas y contactor", "Medición de amperaje del compresor", "Limpieza de bandeja y drenaje de condensado", "Verificación de temperatura de operación", "Ajuste de termostato"];
   const gerencias = [...new Set(equipos.map(gerenciaDe))].sort();
   const [f, setF] = useState({ gerencia: "", fechaInicio: hoy(), fechaFin: hoy(), tecnico: "", nota: "" });
   const [sel, setSel] = useState({});      // equipoId -> bool (equipos atendidos)
   const [checks, setChecks] = useState({}); // tarea -> bool (checklist de la jornada)
   const [fotos, setFotos] = useState([]);
+  const [editId, setEditId] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   const equiposDelArea = f.gerencia ? equipos.filter((e) => gerenciaDe(e) === f.gerencia) : [];
@@ -1825,17 +1843,52 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar }) {
   };
   const quitarFoto = (i) => setFotos((fs) => fs.filter((_, k) => k !== i));
 
-  const listo = f.gerencia && f.fechaInicio && nSel > 0;
+  const editando = jornadas.find((x) => x.id === editId) || null;
+  const listo = editId ? (f.gerencia && f.fechaInicio) : (f.gerencia && f.fechaInicio && nSel > 0);
+
+  /* desglose por tipo Y por capacidad */
+  const calcDesglose = (lista) => {
+    const dt = {}, dc = {};
+    lista.forEach((e) => {
+      dt[e.tipo] = (dt[e.tipo] || 0) + 1;
+      const cap = (e.capacidad || "").trim() || "Sin especificar";
+      dc[cap] = (dc[cap] || 0) + 1;
+    });
+    return {
+      tipo: Object.entries(dt).map(([tipo, n]) => ({ tipo, n })),
+      cap: Object.entries(dc).map(([capacidad, n]) => ({ capacidad, n })).sort((a, b) => b.n - a.n),
+    };
+  };
+
+  const cargarParaEditar = (j) => {
+    setEditId(j.id);
+    setF({ gerencia: j.gerencia, fechaInicio: j.fechaInicio, fechaFin: j.fechaFin || j.fechaInicio, tecnico: j.tecnico || "", nota: j.nota || "" });
+    setSel({}); setChecks({}); setFotos([]);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const cancelarEdicion = () => { setEditId(null); setSel({}); setChecks({}); setF({ gerencia: "", fechaInicio: hoy(), fechaFin: hoy(), tecnico: "", nota: "" }); };
+
   const guardar = () => {
     if (!listo) return;
     const atendidos = equiposDelArea.filter((e) => sel[e.id]);
-    const desglose = {};
-    atendidos.forEach((e) => { desglose[e.tipo] = (desglose[e.tipo] || 0) + 1; });
+    if (editId) {
+      /* EDICIÓN: solo actualiza los datos de la jornada; NO regenera preventivos (no afecta el análisis) */
+      const base = editando || {};
+      const hayNuevaSel = nSel > 0;
+      onActualizar(editId, {
+        gerencia: f.gerencia, fechaInicio: f.fechaInicio, fechaFin: f.fechaFin || f.fechaInicio,
+        tecnico: f.tecnico.trim(), nota: f.nota.trim(),
+        equiposAtendidos: hayNuevaSel ? nSel : base.equiposAtendidos,
+        desglose: hayNuevaSel ? calcDesglose(atendidos) : base.desglose,
+      });
+      cancelarEdicion(); setFotos([]);
+      return;
+    }
     const tareas = JORNADA_CHECKLIST.filter((t) => checks[t]);
     onRegistrar({
       gerencia: f.gerencia, fechaInicio: f.fechaInicio, fechaFin: f.fechaFin || f.fechaInicio,
       equiposAtendidos: nSel, tecnico: f.tecnico.trim(), nota: f.nota.trim(),
-      desglose: Object.entries(desglose).map(([tipo, n]) => ({ tipo, n })),
+      desglose: calcDesglose(atendidos),
       equiposIds: idsSel, tareas,
     });
     setSel({}); setChecks({}); setF({ ...f, nota: "" }); setFotos([]);
@@ -1851,6 +1904,11 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar }) {
           Registrar jornada de mantenimiento
           <Ayuda texto="Una jornada documenta el mantenimiento preventivo de un área que se atiende en uno o varios días (como los informes del área). Selecciona el área, el rango de fechas, marca los equipos que se atendieron y el checklist de tareas realizadas. Al guardar, se genera un preventivo individual por cada equipo marcado (con su checklist), de modo que la jornada también alimenta el historial y los indicadores del estudio. Las fotos son solo para el informe del momento y no se guardan en la nube." />
         </h2>
+        {editId && (
+          <div style={{ marginTop: 10, padding: "8px 12px", background: "#FFF7E0", border: `1.5px solid ${T.orange}`, borderRadius: 8, fontFamily: mono, fontSize: 13 }}>
+            Editando la jornada de <strong>{editando ? editando.gerencia : ""}</strong>. Cambia las fechas u otros datos y pulsa «Actualizar jornada». Deja los equipos sin marcar para conservar los actuales.
+          </div>
+        )}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
           <Field label="Área / Gerencia" ancho={220}>
             <select style={inputStyle} value={f.gerencia} onChange={elegirArea}>
@@ -1933,9 +1991,12 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar }) {
           {fotos.length > 0 && <p style={{ fontSize: 12, color: T.inkSoft, margin: "6px 0 0" }}>{fotos.length} foto{fotos.length === 1 ? "" : "s"} cargada{fotos.length === 1 ? "" : "s"} (temporal, no se guarda).</p>}
         </div>
 
-        <button style={{ ...btn(T.orange), marginTop: 16, opacity: listo ? 1 : 0.5 }} disabled={!listo} onClick={guardar}>
-          Guardar jornada
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
+          <button style={{ ...btn(T.orange), opacity: listo ? 1 : 0.5 }} disabled={!listo} onClick={guardar}>
+            {editId ? "Actualizar jornada" : "Guardar jornada"}
+          </button>
+          {editId && <button style={btnGhost(T.inkSoft)} onClick={cancelarEdicion}>Cancelar edición</button>}
+        </div>
       </section>
 
       <section>
@@ -1951,6 +2012,9 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar }) {
                   <strong style={{ fontFamily: display, fontSize: 19, textTransform: "uppercase" }}>{j.gerencia}</strong>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <span style={{ fontFamily: mono, fontSize: 13, color: T.ok, fontWeight: 600 }}>{j.equiposAtendidos} equipo{j.equiposAtendidos === 1 ? "" : "s"}</span>
+                    {onActualizar && (
+                      <button onClick={() => cargarParaEditar(j)} title="Editar jornada" style={{ background: "none", border: "none", cursor: "pointer", color: T.steel, fontFamily: mono, fontSize: 12.5, fontWeight: 600, padding: "2px 6px" }}>Editar</button>
+                    )}
                     {onEliminar && (
                       <button
                         onClick={() => onEliminar(j.id)}
@@ -1965,13 +2029,30 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar }) {
                 <div style={{ fontFamily: mono, fontSize: 13, color: T.inkSoft, marginTop: 2 }}>
                   Del {j.fechaInicio} al {j.fechaFin}{j.tecnico ? ` · ${j.tecnico}` : ""}
                 </div>
-                {j.desglose && j.desglose.length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                    {j.desglose.map((d) => (
-                      <span key={d.tipo} style={{ fontFamily: mono, fontSize: 11.5, padding: "2px 9px", borderRadius: 6, background: T.bg, border: `1px solid ${T.line}` }}>{d.tipo}: {d.n}</span>
-                    ))}
-                  </div>
-                )}
+                {(() => {
+                  const dg = j.desglose;
+                  const tipos = Array.isArray(dg) ? dg : (dg && dg.tipo) || [];
+                  const caps = (dg && !Array.isArray(dg) && dg.cap) || [];
+                  if (!tipos.length && !caps.length) return null;
+                  return (
+                    <>
+                      {tipos.length > 0 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
+                          {tipos.map((d) => (
+                            <span key={d.tipo} style={{ fontFamily: mono, fontSize: 11.5, padding: "2px 9px", borderRadius: 6, background: T.bg, border: `1px solid ${T.line}` }}>{d.tipo}: {d.n}</span>
+                          ))}
+                        </div>
+                      )}
+                      {caps.length > 0 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                          {caps.map((c) => (
+                            <span key={c.capacidad} style={{ fontFamily: mono, fontSize: 11.5, padding: "2px 9px", borderRadius: 6, background: "#EAF3FA", border: `1px solid ${T.line}` }}>{c.n} de {c.capacidad}</span>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
                 {j.nota && <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 6 }}>{j.nota}</div>}
               </div>
             </div>
@@ -2126,14 +2207,23 @@ function Diario({ equipos, atenciones, lecturas, jornadas, aires }) {
 const TIPOS_AIRE = ["Split", "A/A ventana", "Central / compacto", "Otro"];
 const fmtFecha = (s) => (s ? String(s).slice(0, 10).split("-").reverse().join("/") : "—");
 
-function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
+function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan, onActualizar }) {
   const [f, setF] = useState({ lugar: "", marca: "", tipo: "Split", capacidad: "", fechaMontaje: hoy(), serial: "", codigoVisco: "", nota: "" });
   const [busca, setBusca] = useState("");
+  const [editId, setEditId] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const listo = f.lugar.trim() && f.fechaMontaje;
+  const cargarParaEditar = (a) => {
+    setEditId(a.id);
+    setF({ lugar: a.lugar || "", marca: a.marca || "", tipo: a.tipo || "Split", capacidad: a.capacidad || "", fechaMontaje: a.fechaMontaje || hoy(), serial: a.serial || "", codigoVisco: a.codigoVisco || "", nota: a.nota || "" });
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+  const cancelarEdicion = () => { setEditId(null); setF({ lugar: "", marca: "", tipo: "Split", capacidad: "", fechaMontaje: hoy(), serial: "", codigoVisco: "", nota: "" }); };
   const guardar = () => {
     if (!listo) return;
-    onRegistrar({ n: null, lugar: f.lugar.trim(), marca: f.marca.trim(), tipo: f.tipo, capacidad: f.capacidad.trim(), fechaMontaje: f.fechaMontaje, serial: f.serial.trim(), codigoVisco: f.codigoVisco.trim().toUpperCase(), nota: f.nota.trim() });
+    const datos = { lugar: f.lugar.trim(), marca: f.marca.trim(), tipo: f.tipo, capacidad: f.capacidad.trim(), fechaMontaje: f.fechaMontaje, serial: f.serial.trim(), codigoVisco: f.codigoVisco.trim().toUpperCase(), nota: f.nota.trim() };
+    if (editId) { onActualizar(editId, datos); cancelarEdicion(); return; }
+    onRegistrar({ n: null, ...datos });
     setF({ ...f, lugar: "", marca: "", capacidad: "", serial: "", codigoVisco: "", nota: "" });
   };
 
@@ -2169,7 +2259,12 @@ function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
 
       {/* registrar nuevo */}
       <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
-        <h2 style={h2Style}>Registrar equipo instalado</h2>
+        <h2 style={h2Style}>{editId ? "Editar equipo instalado" : "Registrar equipo instalado"}</h2>
+        {editId && (
+          <div style={{ marginTop: 8, padding: "8px 12px", background: "#FFF7E0", border: `1.5px solid ${T.orange}`, borderRadius: 8, fontFamily: mono, fontSize: 13 }}>
+            Editando el equipo instalado en <strong>{f.lugar || "—"}</strong>. Modifica los datos y pulsa «Actualizar equipo instalado».
+          </div>
+        )}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
           <Field label="Lugar de instalación" ancho={240}>
             <input style={inputStyle} value={f.lugar} onChange={set("lugar")} placeholder="HOSPITAL – BANCO DE SANGRE" />
@@ -2198,9 +2293,12 @@ function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
             <input style={inputStyle} value={f.nota} onChange={set("nota")} placeholder="Reemplazo del equipo anterior" />
           </Field>
         </div>
-        <button style={{ ...btn(T.orange), marginTop: 16, opacity: listo ? 1 : 0.5 }} disabled={!listo} onClick={guardar}>
-          Guardar equipo instalado
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 16 }}>
+          <button style={{ ...btn(T.orange), opacity: listo ? 1 : 0.5 }} disabled={!listo} onClick={guardar}>
+            {editId ? "Actualizar equipo instalado" : "Guardar equipo instalado"}
+          </button>
+          {editId && <button style={btnGhost(T.inkSoft)} onClick={cancelarEdicion}>Cancelar edición</button>}
+        </div>
       </section>
 
       {/* listado */}
@@ -2231,6 +2329,7 @@ function AiresMontados({ aires, onRegistrar, onEliminar, onAlPlan }) {
                 {a.nota && <div style={{ fontSize: 13, color: T.inkSoft, marginTop: 6 }}>{a.nota}</div>}
                 <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                   <button style={btnGhost(T.steel)} onClick={() => onAlPlan(a)}>→ Al plan de mantenimiento</button>
+                  {onActualizar && <button style={btnGhost(T.frio)} onClick={() => cargarParaEditar(a)}>Editar</button>}
                   <button style={btnGhost(T.danger)} onClick={() => onEliminar(a.id)}>Eliminar</button>
                 </div>
               </div>
@@ -2619,7 +2718,7 @@ function Analisis({ equipos, equiposActivos, atenciones, lecturas, jornadas, onE
       ];
 
       /* --- jornadas --- */
-      const jorn = (jornadas || []).slice().sort((a, b) => String(b.fechaInicio).localeCompare(String(a.fechaInicio))).map((j) => ({ "Área/Gerencia": j.gerencia, "Fecha inicio": j.fechaInicio, "Fecha fin": j.fechaFin, "Equipos atendidos": j.equiposAtendidos, "Técnico/cuadrilla": j.tecnico, "Observación": j.nota, "Desglose por tipo": (j.desglose || []).map((d) => `${d.tipo}: ${d.n}`).join(" · ") }));
+      const jorn = (jornadas || []).slice().sort((a, b) => String(b.fechaInicio).localeCompare(String(a.fechaInicio))).map((j) => { const dg = j.desglose; const tp = Array.isArray(dg) ? dg : (dg && dg.tipo) || []; const cp = (dg && !Array.isArray(dg) && dg.cap) || []; return ({ "Área/Gerencia": j.gerencia, "Fecha inicio": j.fechaInicio, "Fecha fin": j.fechaFin, "Equipos atendidos": j.equiposAtendidos, "Técnico/cuadrilla": j.tecnico, "Observación": j.nota, "Desglose por tipo": tp.map((d) => `${d.tipo}: ${d.n}`).join(" · "), "Desglose por capacidad": cp.map((c) => `${c.n} de ${c.capacidad}`).join(" · ") }); });
 
       /* --- lecturas de temperatura --- */
       const lect = (lecturas || []).slice().sort((a, b) => areaDe(a.equipoId).localeCompare(areaDe(b.equipoId)) || String(b.fecha).localeCompare(String(a.fecha))).map((l) => ({ "Fecha": l.fecha, "Área": areaDe(l.equipoId), "Equipo": nombre(l.equipoId), "Temperatura (°C)": l.valor, "¿Fuera de rango?": l.fuera ? "Sí" : "No", "Técnico": l.tecnico }));
