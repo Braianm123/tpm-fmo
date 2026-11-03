@@ -128,6 +128,25 @@ const pct = (n) => (Number.isFinite(n) ? (n * 100).toFixed(1) + " %" : "—");
 const diasEntre = (a, b) => Math.max(0, Math.round((new Date(b) - new Date(a)) / 86400000));
 const gerenciaDe = (e) => (e.gerencia && e.gerencia.trim() ? e.gerencia.trim() : "Sin área asignada");
 
+/* normaliza la capacidad para agrupar: "5 TN" = "5 TON" = "5 toneladas"; BTU con mismo formato */
+const conPuntos = (n) => n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+const normCap = (raw) => {
+  const c = (raw == null ? "" : raw).toString().trim();
+  if (!c) return "Sin especificar";
+  const up = c.toUpperCase().replace(/\s+/g, " ");
+  const m = up.match(/[\d.,]+/);
+  const num = m ? m[0].replace(/[.,]/g, "") : "";
+  if (/TON|TN|TONELAD/.test(up)) return num ? `${parseInt(num, 10)} TON` : "TON";
+  if (/BTU/.test(up)) return num ? `${conPuntos(parseInt(num, 10))} BTU` : "BTU";
+  return up;
+};
+/* reagrupa un desglose por capacidad ya guardado, uniendo equivalentes */
+const mergeCap = (arr) => {
+  const m = {};
+  (arr || []).forEach((c) => { const k = normCap(c.capacidad); m[k] = (m[k] || 0) + (c.n || 0); });
+  return Object.entries(m).map(([capacidad, n]) => ({ capacidad, n })).sort((a, b) => b.n - a.n);
+};
+
 function estadoEquipo(e) {
   const dias = diasEntre(e.ultimoPrev, hoy());
   const uso = e.intervaloDias > 0 ? dias / e.intervaloDias : 0;
@@ -1851,7 +1870,7 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar, onActualizar }) 
     const dt = {}, dc = {};
     lista.forEach((e) => {
       dt[e.tipo] = (dt[e.tipo] || 0) + 1;
-      const cap = (e.capacidad || "").trim() || "Sin especificar";
+      const cap = normCap(e.capacidad);
       dc[cap] = (dc[cap] || 0) + 1;
     });
     return {
@@ -2040,7 +2059,7 @@ function Jornadas({ equipos, jornadas, onRegistrar, onEliminar, onActualizar }) 
                 {(() => {
                   const dg = j.desglose;
                   const tipos = Array.isArray(dg) ? dg : (dg && dg.tipo) || [];
-                  const caps = (dg && !Array.isArray(dg) && dg.cap) || [];
+                  const caps = mergeCap((dg && !Array.isArray(dg) && dg.cap) || []);
                   if (!tipos.length && !caps.length) return null;
                   return (
                     <>
@@ -2726,7 +2745,7 @@ function Analisis({ equipos, equiposActivos, atenciones, lecturas, jornadas, onE
       ];
 
       /* --- jornadas --- */
-      const jorn = (jornadas || []).slice().sort((a, b) => String(b.fechaInicio).localeCompare(String(a.fechaInicio))).map((j) => { const dg = j.desglose; const tp = Array.isArray(dg) ? dg : (dg && dg.tipo) || []; const cp = (dg && !Array.isArray(dg) && dg.cap) || []; return ({ "Área/Gerencia": j.gerencia, "Fecha inicio": j.fechaInicio, "Fecha fin": j.fechaFin, "Equipos atendidos": j.equiposAtendidos, "Técnico/cuadrilla": j.tecnico, "Observación": j.nota, "Desglose por tipo": tp.map((d) => `${d.tipo}: ${d.n}`).join(" · "), "Desglose por capacidad": cp.map((c) => `${c.n} de ${c.capacidad}`).join(" · ") }); });
+      const jorn = (jornadas || []).slice().sort((a, b) => String(b.fechaInicio).localeCompare(String(a.fechaInicio))).map((j) => { const dg = j.desglose; const tp = Array.isArray(dg) ? dg : (dg && dg.tipo) || []; const cp = mergeCap((dg && !Array.isArray(dg) && dg.cap) || []); return ({ "Área/Gerencia": j.gerencia, "Fecha inicio": j.fechaInicio, "Fecha fin": j.fechaFin, "Equipos atendidos": j.equiposAtendidos, "Técnico/cuadrilla": j.tecnico, "Observación": j.nota, "Desglose por tipo": tp.map((d) => `${d.tipo}: ${d.n}`).join(" · "), "Desglose por capacidad": cp.map((c) => `${c.n} de ${c.capacidad}`).join(" · ") }); });
 
       /* --- lecturas de temperatura --- */
       const lect = (lecturas || []).slice().sort((a, b) => areaDe(a.equipoId).localeCompare(areaDe(b.equipoId)) || String(b.fecha).localeCompare(String(a.fecha))).map((l) => ({ "Fecha": l.fecha, "Área": areaDe(l.equipoId), "Equipo": nombre(l.equipoId), "Temperatura (°C)": l.valor, "¿Fuera de rango?": l.fuera ? "Sí" : "No", "Técnico": l.tecnico }));
