@@ -1267,7 +1267,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
       <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
         <h2 style={h2Style}>
           Inventario por área
-          <Ayuda texto="Todos los equipos agrupados por su área o gerencia, igual que en el Tablero. Toca un área para desplegarla. En cada equipo puedes EDITAR su ficha técnica, registrar una FALLA o un PREVENTIVO (te lleva a Registrar con el equipo ya seleccionado y su checklist listo) y ver su HISTORIAL de atenciones. Así el control de cada equipo queda en un solo lugar." />
+          <Ayuda texto="Todos los equipos agrupados por su área o gerencia, igual que en el Tablero. Toca un área para desplegarla. En cada equipo puedes EDITAR su ficha técnica, registrar un CORRECTIVO o un PREVENTIVO (te lleva a Registrar con el equipo ya seleccionado y su checklist listo) y ver su HISTORIAL de atenciones. Así el control de cada equipo queda en un solo lugar." />
         </h2>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
           <input
@@ -1360,7 +1360,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
                         <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <button style={btnGhost(T.steel)} onClick={() => abrirEdicion(e)}>Editar</button>
                           {onReemplazar && <button style={btnGhost(T.frio)} onClick={() => abrirReemplazo(e)}>Reemplazar</button>}
-                          <button style={btnGhost(T.danger)} onClick={() => onRegistrar(e.id, "correctiva")}>+ Falla</button>
+                          <button style={btnGhost(T.danger)} onClick={() => onRegistrar(e.id, "correctiva")}>+ Correctivo</button>
                           <button style={btnGhost(T.ok)} onClick={() => onRegistrar(e.id, "preventiva")}>+ Preventivo</button>
                           <button style={{ ...btnGhost(pend.length > 0 ? T.warn : T.inkSoft) }} onClick={() => setObsAbierto({ ...obsAbierto, [e.id]: !verObs })}>
                             {verObs ? "Ocultar pendientes" : `Pendientes (${pend.length})`}
@@ -1444,7 +1444,7 @@ function Equipos({ equipos, atenciones, lecturas, observaciones = [], foco, onAg
                                   <div key={a.id} style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "6px 0", borderBottom: `1px solid ${T.line}`, fontSize: 13 }}>
                                     <span style={{ fontFamily: mono, color: T.inkSoft, width: 82, flexShrink: 0 }}>{fmtF(a.fecha)}</span>
                                     <span style={{ fontFamily: mono, fontSize: 11, fontWeight: 700, padding: "1px 8px", borderRadius: 10, color: "#fff", background: a.tipo === "preventiva" ? (String(a.nota || "").indexOf("[PARCIAL]") === 0 ? T.steel : T.ok) : T.danger, flexShrink: 0 }}>
-                                      {a.tipo === "preventiva" ? (String(a.nota || "").indexOf("[PARCIAL]") === 0 ? "PREV. PARCIAL" : "PREVENTIVO") : "FALLA"}
+                                      {a.tipo === "preventiva" ? (String(a.nota || "").indexOf("[PARCIAL]") === 0 ? "PREV. PARCIAL" : "PREVENTIVO") : "CORRECTIVO"}
                                     </span>
                                     <span style={{ flex: 1 }}>
                                       {a.tipo === "preventiva"
@@ -1645,7 +1645,7 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
 
   if (!equipos.length) return <p style={{ color: T.inkSoft }}>Primero registra un equipo en la pestaña <strong>Equipos</strong>.</p>;
 
-  const modos = [["correctiva", "Falla (correctiva)"], ["preventiva", "Preventivo"], ["lectura", "Lectura de temperatura"]];
+  const modos = [["correctiva", "Correctivo"], ["preventiva", "Preventivo"], ["lectura", "Lectura de temperatura"]];
 
   return (
     <div style={{ maxWidth: 760 }}>
@@ -1661,7 +1661,7 @@ function Registrar({ equipos, onAtencion, onLectura, preseleccion, onObservacion
       <section style={{ background: T.panel, border: `1.5px solid ${T.line}`, borderRadius: 8, padding: 16 }}>
         {editId && <div style={{ background: "rgba(74,74,70,0.10)", border: `1.5px solid ${T.steel}`, borderRadius: 8, padding: "8px 12px", marginBottom: 10, fontSize: 13 }}>✎ Editando un registro existente. Corrige los datos y pulsa <strong>Guardar cambios</strong>.</div>}
         <h2 style={h2Style}>
-          {esFalla ? "Registrar falla atendida" : esPrev ? "Registrar preventivo ejecutado" : "Registrar lectura de temperatura"}
+          {esFalla ? "Registrar mantenimiento correctivo" : esPrev ? "Registrar preventivo ejecutado" : "Registrar lectura de temperatura"}
           <Ayuda texto={esFalla
             ? "El equipo falló y se reparó: registra la causa raíz, las horas que estuvo fuera de servicio, el técnico y el gas usado si hubo recarga. Alimenta la disponibilidad, el Pareto y el control de refrigerante."
             : esPrev
@@ -3071,7 +3071,7 @@ function Analisis({ equipos, equiposActivos, atenciones, lecturas, jornadas, onE
         {(() => {
           const nF = atFiltradas.filter((a) => a.tipo === "correctiva").length;
           const nP = atFiltradas.filter((a) => a.tipo === "preventiva").length;
-          const chips = [["todas", `Todas (${atFiltradas.length})`, T.steel], ["correctiva", `Fallas (${nF})`, T.danger], ["preventiva", `Preventivos (${nP})`, T.ok]];
+          const chips = [["todas", `Todas (${atFiltradas.length})`, T.steel], ["correctiva", `Correctivos (${nF})`, T.danger], ["preventiva", `Preventivos (${nP})`, T.ok]];
           return (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
               {chips.map(([k, lbl, col]) => (
@@ -3089,7 +3089,7 @@ function Analisis({ equipos, equiposActivos, atenciones, lecturas, jornadas, onE
             <div style={{ padding: "10px 14px", fontSize: 13, flex: 1 }}>
               <span style={{ fontFamily: mono, color: T.inkSoft }}>{a.fecha}</span>{" "}
               <strong style={{ fontFamily: display, fontSize: 16, textTransform: "uppercase" }}>{nombre(a.equipoId)}</strong>{" "}
-              <span style={{ color: a.tipo === "correctiva" ? T.danger : T.ok, fontWeight: 600 }}>{a.tipo === "correctiva" ? "CORRECTIVA" : "PREVENTIVA"}</span>
+              <span style={{ color: a.tipo === "correctiva" ? T.danger : T.ok, fontWeight: 600 }}>{a.tipo === "correctiva" ? "CORRECTIVO" : "PREVENTIVO"}</span>
               {a.tecnico && <span style={{ fontFamily: mono, color: T.inkSoft }}> · {a.tecnico}</span>}
               {a.tipo === "correctiva" && <span style={{ fontFamily: mono, color: T.inkSoft }}> · {a.causa} · {fmt(+a.horasFuera)} h fuera</span>}
               {+a.kgGas > 0 && <span style={{ fontFamily: mono, color: "#9A7503" }}> · {fmt(+a.kgGas, 2)} kg de gas</span>}
@@ -3193,7 +3193,7 @@ function Guia({ onVaciar, onReal }) {
       </S>
 
       <S titulo="Los tres tipos de registro">
-        <Tarjeta color={T.danger} titulo="Falla (correctiva)">
+        <Tarjeta color={T.danger} titulo="Correctivo">
           El equipo falló y se atendió. Se registra la <strong>causa raíz</strong>, las <strong>horas fuera de
           servicio</strong>, el técnico y el gas usado si hubo recarga. Alimenta la disponibilidad, el Pareto de causas
           y el control de refrigerante.
